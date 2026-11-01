@@ -194,7 +194,7 @@ Status: install user installed
 Architecture: aarch64_cortex-a53
 ```
 
-After the install the packaged binary answers HTTP (`HTTP_OK`, RSS 48.8 MB),
+After the install the packaged binary answers HTTP (`HTTP_OK`, RSS ~47.7 MB),
 and `opkg remove` takes the package away again.
 
 The package carries no config: the path `/etc/wg-portal/config.yaml` in the
