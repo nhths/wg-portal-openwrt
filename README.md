@@ -305,3 +305,11 @@ WG_STATUS=OK
   the OpenWrt image). And as soon as `opkg.conf` contains a single such line,
   the default list `[all, noarch, <build arch>]` is *not* added — write the
   whole list.
+- The API of the portal encodes every id: base64 with `=` → `-`, `/` → `_`,
+  `+` → `.` (the interface id in the peer paths is encoded the same way).
+  The peer model wraps its configurable values (`Endpoint`, `AllowedIPs`,
+  `Dns`, …) into `{"Value": …, "Overridable": …}` — a plain string is
+  rejected. Both are handled in `scripts/portal-api.py`.
+- The peer configuration the portal hands out carries the allowed IPs of the
+  *peer* (`10.99.0.0/24` here). The client routes that network into the
+  tunnel, the server uses it to check the source address of the packets.
