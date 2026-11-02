@@ -14,8 +14,12 @@ ROOTFS=${1:?the rootfs directory}
 IMAGE=${2:?the image to create}
 SIZE=${3:-128}
 
-sudo rm -f "$IMAGE"
-sudo mke2fs -q -t ext4 -m 0 -b 4096 -F -d "$ROOTFS" -L routerflash "$IMAGE" "${SIZE}M"
+# Inside the image of the check the script runs as root already.
+SUDO=""
+[ "$(id -u)" -eq 0 ] || SUDO="sudo"
+
+$SUDO rm -f "$IMAGE"
+$SUDO mke2fs -q -t ext4 -m 0 -b 4096 -F -d "$ROOTFS" -L routerflash "$IMAGE" "${SIZE}M"
 # QEMU opens the image as the user, not as root.
-sudo chown "$(id -u):$(id -g)" "$IMAGE"
+$SUDO chown "$(id -u):$(id -g)" "$IMAGE"
 ls -l "$IMAGE"

@@ -1,0 +1,83 @@
+---
+# The guest side of the check: the portal has created the interface, the
+# client on the host is up, so the tunnel has to carry traffic and the guest
+# has to be able to ping the client through it.
+- name: Wait for the interface of the portal
+  community.openwrt.command:
+    cmd: "ip link show {{ wgp.interface }}"
+  register: tunnel_interface
+  until: tunnel_interface.rc == 0
+  retries: 90
+  delay: 2
+
+- name: Report the interface of the portal
+  ansible.builtin.debug:
+    msg: "{{ tunnel_interface.stdout | trim }}"
+
+- name: Put the tunnel interface into the firewall
+  # The interface of the portal belongs to no zone of the firewall, and the
+  # traffic of a peer is not tracked by the connection tracking: the default
+  # policy of the firewall rejects it, and the peer gets an "unreachable"
+  # instead of the answer.
+  #
+  # The zone has to name the device, not a network: the interface of the
+  # portal is created by the portal itself and is not in /etc/config/network,
+  # so a network of that name would never match any traffic.
+  community.openwrt.uci:
+    autocommit: true
+    operations:
+      - command: section
+        config: firewall
+        type: zone
+        name: wg
+        value:
+          name: wg
+          input: ACCEPT
+          output: ACCEPT
+          forward: ACCEPT
+      - command: add_list
+        config: firewall
+        section: wg
+        option: device
+        value: "{{ wgp.interface }}"
+        unique: true
+
+- name: Reload the firewall
+  community.openwrt.command:
+    cmd: "/etc/init.d/firewall reload"
+  changed_when: false
+
+- name: Ping the client through the tunnel
+  community.openwrt.command:
+    cmd: "ping -c 3 -W 3 {{ wgp.client_addr }}"
+    uses_shell: true
+  register: tunnel_ping
+  changed_when: false
+
+- name: Report the ping through the tunnel
+  ansible.builtin.debug:
+    msg: "TUNNEL_PING=OK"
+
+- name: Fail when the client does not answer through the tunnel
+  ansible.builtin.fail:
+    msg: "the client {{ wgp.client_addr }} does not answer through the tunnel"
+  when: tunnel_ping.rc != 0
+
+- name: Read the counters of the tunnel
+  community.openwrt.command:
+    cmd: >-
+      cat /sys/class/net/{{ wgp.interface }}/statistics/rx_bytes
+      /sys/class/net/{{ wgp.interface }}/statistics/tx_bytes
+  register: tunnel_counters
+  changed_when: false
+
+- name: Report the counters of the tunnel
+  ansible.builtin.debug:
+    msg: "TUNNEL_TRAFFIC {{ tunnel_counters.stdout | default('') | replace('\n', ' ') }}"
+
+- name: Fail when the tunnel carries no traffic
+  ansible.builtin.fail:
+    msg: "the tunnel of {{ wgp.interface }} carries no traffic"
+  when: >-
+    (tunnel_counters.stdout | default('') | split('\n') | map('trim') | select('ne', '')
+     | map('int') | select('gt', 0) | list | length) < 2

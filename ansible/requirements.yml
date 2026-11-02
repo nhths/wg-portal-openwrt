@@ -1,0 +1,7 @@
+---
+# The collections the playbooks of this directory need.
+#   ansible-galaxy collection install -r ansible/requirements.yml
+collections:
+  # ucode modules for the OpenWrt guest — no Python needed on the device.
+  - name: community.openwrt
+    version: ">=1.10.0"

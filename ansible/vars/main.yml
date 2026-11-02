@@ -1,0 +1,56 @@
+---
+# The defaults of the check. The harness (scripts/check-wireguard.sh) passes
+# the values of the emulated router in with -e @<file>.json as
+# "wgp_overrides" — they are merged into these.
+wgp_defaults:
+  # The portal inside the guest.
+  web_port: 8888
+  wg_port: 51820
+  admin_password: wg-portal-check-password
+  interface: wg0
+
+  # The tunnel.
+  server_addr: 10.99.0.1
+  client_addr: 10.99.0.2
+  subnet: 10.99.0.0/24
+
+  # The guest and the key the harness connects with.
+  link_guest: 10.77.0.2
+  key_file: /tmp/wgp-vm/id_ed25519
+
+  # The packages of the guest, in the order they are installed in. The order
+  # is the order of the dependencies: opkg resolves a dependency against the
+  # installed packages, so the kernel modules come first and the portal, which
+  # depends on the WireGuard one, comes last. The files are copied to the
+  # guest under these names.
+  packages:
+    - kmod-crypto-kpp.ipk
+    - kmod-crypto-lib-chacha20.ipk
+    - kmod-crypto-lib-poly1305.ipk
+    - kmod-crypto-lib-curve25519.ipk
+    - kmod-crypto-lib-chacha20poly1305.ipk
+    - kmod-udptunnel4.ipk
+    - kmod-udptunnel6.ipk
+    - kmod-wireguard.ipk
+    - wg-portal.ipk
+
+  # The kernel modules the WireGuard one needs.
+  modules:
+    - libcurve25519-generic
+    - poly1305-neon
+    - libchacha20poly1305
+    - udp_tunnel
+    - ip6_udp_tunnel
+    - wireguard
+
+  # opkg takes its architecture list from the "arch <name> <priority>" lines of
+  # opkg.conf, and refuses a package whose architecture is not in the list.
+  # The stock rootfs has no such lines at all. The portal is built for the
+  # architecture of the router (aarch64_cortex-a53), the kernel modules for
+  # the one of the OpenWrt build (aarch64_generic), and "all" and "any" are the
+  # pseudo-architectures of the packages that do not depend on the build.
+  architectures:
+    - "all 1"
+    - "any 2"
+    - "aarch64_generic 10"
+    - "aarch64_cortex-a53 10"

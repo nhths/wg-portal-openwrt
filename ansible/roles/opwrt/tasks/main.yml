@@ -1,0 +1,104 @@
+---
+# The OpenWrt setup of the emulated router: the packages of the portal, the
+# WireGuard kernel modules, the configuration of the portal and the service.
+- name: Wait for the guest
+  community.openwrt.command:
+    cmd: "uname -a"
+  register: opwrt_kernel
+  until: opwrt_kernel.rc == 0
+  retries: 60
+  delay: 2
+
+- name: Report the guest
+  ansible.builtin.debug:
+    msg: "{{ opwrt_kernel.stdout | trim }}"
+
+- name: Accept the architectures of the packages
+  community.openwrt.lineinfile:
+    path: /etc/opkg.conf
+    line: "arch {{ item }}"
+    state: present
+  loop: "{{ wgp.architectures }}"
+
+- name: Copy the packages to the guest
+  community.openwrt.copy:
+    src: "{{ wgp.package_dir }}/{{ item }}"
+    dest: "/tmp/{{ item }}"
+    mode: "0644"
+  loop: "{{ wgp.packages }}"
+
+- name: Install the portal and the kernel modules
+  # The packages are local files, so they are installed by their path. They are
+  # installed in the order of their dependencies: opkg resolves a dependency
+  # against the installed packages.
+  community.openwrt.command:
+    cmd: "opkg install /tmp/{{ item }}"
+  loop: "{{ wgp.packages }}"
+  register: opwrt_install
+  changed_when: false
+
+- name: Report the installation
+  ansible.builtin.debug:
+    msg: "{{ opwrt_install.results | map(attribute='stdout') | join(' / ') }}"
+
+- name: Check that the portal is installed
+  community.openwrt.command:
+    cmd: "opkg status wg-portal"
+  register: opwrt_status
+  changed_when: false
+  failed_when: "'Status: install user installed' not in opwrt_status.stdout"
+
+- name: Load the WireGuard kernel modules
+  # OpenWrt has no modprobe, the modules are loaded by kmodloader. The
+  # postinstall scripts of the packages load them already, so a failure here
+  # is not a problem — the check of the tunnel tells if the module is there.
+  community.openwrt.command:
+    cmd: "kmodloader {{ item }}"
+  loop: "{{ wgp.modules }}"
+  failed_when: false
+  changed_when: false
+
+- name: Create the configuration directory of the portal
+  community.openwrt.file:
+    path: /etc/wg-portal
+    state: directory
+    mode: "0700"
+
+- name: Write the configuration of the portal
+  community.openwrt.copy:
+    content: |
+      core:
+        admin_password: {{ wgp.admin_password }}
+      web:
+        listening_address: 0.0.0.0:{{ wgp.web_port }}
+      database:
+        dsn: /tmp/wg.db
+    dest: /etc/wg-portal/config.yaml
+    mode: "0600"
+
+- name: Start the portal
+  community.openwrt.service:
+    name: wg-portal
+    state: started
+    enabled: true
+
+- name: Report the state of the portal
+  # The log of the router and the listening sockets: they tell what the portal
+  # did when it does not answer.
+  community.openwrt.command:
+    cmd: "logread | tail -20; netstat -ltn; ps w | grep wg-portal || true"
+    uses_shell: true
+  register: opwrt_state
+  changed_when: false
+
+- name: Report the state of the portal
+  ansible.builtin.debug:
+    msg: "{{ opwrt_state.stdout }}"
+
+- name: Wait for the portal to answer
+  community.openwrt.command:
+    cmd: "wget -q -O /dev/null http://127.0.0.1:{{ wgp.web_port }}/api/v0/auth/providers"
+  register: opwrt_http
+  until: opwrt_http.rc == 0
+  retries: 90
+  delay: 2
