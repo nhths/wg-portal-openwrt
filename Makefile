@@ -12,7 +12,7 @@ PLATFORM ?= linux/amd64
 QEMU ?= qemu-system-aarch64
 DIST ?= $(CURDIR)/dist
 
-.PHONY: help dist bench check-install build-src lint clean
+.PHONY: help dist bench check-install check-wireguard build-src lint clean
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -26,6 +26,9 @@ bench: ## Measure size, startup time and RAM usage in an emulated arm64 guest
 
 check-install: ## Install the .ipk into an emulated OpenWrt guest and start it
 	./scripts/check-install.sh
+
+check-wireguard: ## Check a real WireGuard tunnel through the portal-managed interface
+	./scripts/check-wireguard.sh
 
 build-src: ## Build wg-portal from source and compare the sizes
 	./scripts/build-src.sh

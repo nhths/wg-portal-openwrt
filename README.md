@@ -15,12 +15,16 @@ scripts/
   build-ipk.sh               download → UPX → build the .ipk
   make-ipk.sh                assemble the .ipk from a binary
   bench.sh                   measure in an emulated arm64 guest
-  check-install.sh           install the .ipk in a guest OpenWrt and run it
+  check-install.sh           install the .ipk in the emulated router and run it
+  check-wireguard.sh         end-to-end check of a real WireGuard tunnel
+  portal-api.py              drive the portal API: interface, peer, config
   build-src.sh               build wg-portal from source and compare sizes
   vm/
     bench-one.sh             start one binary, measure startup time and RSS
     guest-bench.sh           /init of the measurement guest
     guest-install.sh         /init of the install-check guest
+    guest-wireguard.sh       /init of the WireGuard guest
+    build-flash.sh           build the 128 MB flash of the emulated router
     Dockerfile.builder       builder image: vite frontend + Go modules
 ```
 
@@ -29,15 +33,17 @@ tracked — see `.gitignore`.
 
 ## Usage
 
-Docker with network access is required. The measurements and the install check
+Docker with network access is required. The measurements and the checks
 additionally need `qemu-system-aarch64` (`pacman -S qemu-system-aarch64`).
+The WireGuard check needs root (it creates a tap device) and `ethtool`.
 
 ```sh
-make dist          # download, pack with UPX, build the .ipk
-make bench         # measure size, startup time and RAM in an emulated guest
-make check-install # install the .ipk in a guest OpenWrt and start it
-make build-src     # build wg-portal from source and compare the sizes
-make lint          # shellcheck + markdownlint
+make dist           # download, pack with UPX, build the .ipk
+make bench          # measure size, startup time and RAM in an emulated guest
+make check-install  # install the .ipk in a guest OpenWrt and start it
+make check-wireguard # check a real WireGuard tunnel through the portal
+make build-src      # build wg-portal from source and compare the sizes
+make lint           # shellcheck + markdownlint
 ```
 
 `ARCH` is the exact value of `opkg print-architecture` on the router
@@ -200,6 +206,79 @@ and `opkg remove` takes the package away again.
 The package carries no config: the path `/etc/wg-portal/config.yaml` in the
 init script is there for future use. If the file should not be required,
 drop the `procd_set_param env` line in `scripts/make-ipk.sh`.
+
+## The emulated router
+
+Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on a
+128 MB ext4 flash with 512 MB of RAM — the resources of the real router. The
+flash is built with `mke2fs -d` (`scripts/vm/build-flash.sh`), attached as a
+virtio disk, and the guest boots from it directly.
+
+Two details of that kernel shape the guest scripts:
+
+- it has **no devtmpfs**, so the device nodes (`/dev/null`, `/dev/urandom`, …)
+  are created by hand;
+- it has **no gzip decompressor for the initramfs** ("Initramfs unpacking
+  failed: compression method gzip not configured"), so the rootfs cannot live
+  in an initramfs — it lives on the flash.
+
+The WireGuard modules come from the OpenWrt repository: `kmod-wireguard`,
+the crypto modules it needs and `kmod-udptunnel4`/`kmod-udptunnel6`. Their
+postinstall scripts load them, `modprobe` in the guest only fills the gaps.
+
+## WireGuard check
+
+`make check-wireguard` checks the whole chain, not only the web UI: the
+packaged portal runs in the emulated router, creates a real WireGuard server
+interface, hands out a peer configuration through the API, and a client on
+the host connects with that configuration and pings through the tunnel.
+
+```text
+host (wg-test, 10.99.0.2) ──WireGuard──▶ router (wg0, 10.99.0.1)
+   10.77.0.1 ──────────tap──────────▶ 10.77.0.2
+```
+
+The client cannot live in the same network namespace as the server: the
+address of the server interface is a local address there, so the traffic
+never enters the tunnel. The client is therefore on the host.
+
+The two are connected by a tap device, not by the user-mode network of QEMU:
+slirp rewrites the UDP endpoints of the forwarded ports, and a WireGuard peer
+accepts the handshake response only from the address it sent the request to.
+Over the user-mode network the guest receives the handshake, answers it, and
+the answer is lost on the way back.
+
+The offloads of the tap have to be off (`ethtool -K tap tso off gso off gro
+off tx off sg off`): the guest does not understand the checksum and
+segmentation offload of the tap and drops the packets.
+
+What the check does:
+
+1. boots the emulated router, installs the `.ipk` and the WireGuard modules
+   with opkg;
+2. creates the interface `wg0` (server mode, port 51820) and a peer through
+   the API — the same API the web UI talks to (`scripts/portal-api.py`);
+3. takes the configuration the portal returns and brings the client up with
+   it;
+4. pings 10.99.0.1 through the tunnel, and the guest pings the client back;
+   the counters of the interface inside the guest show the traffic.
+
+The result is `WG_STATUS=OK`: the host pings the server through the tunnel,
+the guest pings the client back, and the counters of the interface in the
+guest grow accordingly.
+
+```text
+=== pinging through the tunnel
+PING 10.99.0.1 (10.99.0.1) from 10.99.0.2 wg-test: 56(84) bytes of data.
+64 bytes from 10.99.0.1: icmp_seq=1 ttl=64 time=10.3 ms
+...
+=== waiting for the guest to ping through the tunnel
+64 bytes from 10.99.0.2: seq=0 ttl=64 time=6.137 ms
+3 packets transmitted, 3 packets received, 0% packet loss
+TUNNEL_PING=OK
+TUNNEL_TRAFFIC rx=980 tx=860
+WG_STATUS=OK
+```
 
 ## Caveats
 

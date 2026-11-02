@@ -1,11 +1,21 @@
 #!/bin/sh
-# /init of the install-check guest: a stock OpenWrt rootfs.
+# /init of the install-check guest: a stock OpenWrt rootfs on the flash of
+# the emulated router.
 #
 # Installs the .ipk with opkg, checks what landed on disk, removes the
 # package again and finally starts the installed binary.
 mount -t proc     none /proc
 mount -t sysfs    none /sys
-mount -t devtmpfs none /dev
+# The OpenWrt armv8 kernel has no devtmpfs, the device nodes are created by
+# hand.
+mount -t tmpfs    tmpfs /dev 2>/dev/null
+mknod /dev/null    c 1 3 2>/dev/null
+mknod /dev/zero    c 1 5 2>/dev/null
+mknod /dev/full    c 1 7 2>/dev/null
+mknod /dev/random  c 1 8 2>/dev/null
+mknod /dev/urandom c 1 9 2>/dev/null
+mknod /dev/tty     c 5 0 2>/dev/null
+mknod /dev/console c 5 1 2>/dev/null
 ip link set lo up
 mkdir -p /var/lock /var/run /etc/opkg
 
@@ -13,11 +23,14 @@ echo "=== guest up: $(uname -a)"
 echo "--- openwrt release:"; cat /etc/openwrt_release
 echo "--- opkg print-architecture:"; opkg print-architecture
 
-# opkg takes its architecture list from the "arch <name> <priority>" lines
-# of /etc/opkg.conf (there is no /etc/opkg/arch.conf), and a single such
-# line replaces the default list [all, noarch, <build arch>] instead of
-# extending it. Write the whole list, including the router architecture.
+# opkg takes its architecture list from the "arch <name> <priority>" lines of
+# /etc/opkg.conf (there is no /etc/opkg/arch.conf), and a single such line
+# replaces the default list [all, noarch, <build arch>] instead of extending
+# it. Write the whole list, including the router architecture.
 printf "arch all 1\narch noarch 1\narch aarch64_generic 10\narch aarch64_cortex-a53 10\n" >> /etc/opkg.conf
+# Everything is installed from the local file, the feeds are not needed and
+# only slow the guest down.
+rm -f /etc/opkg/distfeeds.conf
 
 # kmod-wireguard is not part of the stock rootfs. Without it opkg drops the
 # candidate and reports a misleading "incompatible with the architectures

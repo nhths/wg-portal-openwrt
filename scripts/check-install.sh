@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install the .ipk into a stock OpenWrt rootfs running in a fully emulated
-# arm64 guest and start the installed binary.
+# Install the .ipk into the emulated router (a stock OpenWrt rootfs on a
+# 128 MB flash with 512 MB of RAM) and start the installed binary.
 #
 # The openwrt/rootfs container cannot be used for this: its opkg refuses to
 # install local .ipk files at all, a genuine package from the OpenWrt
@@ -16,26 +16,31 @@ BOOT_TIMEOUT=${BOOT_TIMEOUT:-900}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
 DIST=${DIST:-$ROOT/dist}
+OW_TARGET=https://downloads.openwrt.org/releases/${OW_REL}/targets/armsr/armv8
 OW_IMG=openwrt-${OW_REL}-armsr-armv8-generic-ext4-rootfs.img
+OW_KERNEL=openwrt-${OW_REL}-armsr-armv8-generic-kernel.bin
+# The emulated router: 512 MB of RAM and 128 MB of flash.
+MEM_MB=${MEM_MB:-512}
+FLASH_MB=${FLASH_MB:-128}
+GUEST_ROOT=$VM/owroot
 
 mkdir -p "$VM"
 cd "$VM"
 
 if [ ! -f "$OW_IMG" ]; then
-  curl -fsSL -O "https://downloads.openwrt.org/releases/${OW_REL}/targets/armsr/armv8/${OW_IMG}.gz"
+  curl -fsSL -O "$OW_TARGET/${OW_IMG}.gz"
   gunzip -f "${OW_IMG}.gz"
 fi
-[ -f vmlinuz-virt ] || curl -fsSL -O \
-  "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/netboot/vmlinuz-virt"
+[ -f "$OW_KERNEL" ] || curl -fsSL -O "$OW_TARGET/$OW_KERNEL"
 
-if [ ! -d owroot ]; then
-  sudo mkdir -p owroot
-  sudo debugfs -R "rdump / $VM/owroot" "$OW_IMG" >/dev/null 2>&1
+if [ ! -d "$GUEST_ROOT" ]; then
+  sudo mkdir -p "$GUEST_ROOT"
+  sudo debugfs -R "rdump / $GUEST_ROOT" "$OW_IMG" >/dev/null 2>&1
 fi
 # debugfs extracts as root and /init is a symlink to /sbin/init in the
 # OpenWrt rootfs: drop it before writing our own.
-sudo chown -R "$(id -u):$(id -g)" owroot
-sudo rm -f owroot/init
+sudo chown -R "$(id -u):$(id -g)" "$GUEST_ROOT"
+sudo rm -f "$GUEST_ROOT/init"
 
 IPK=$(ls "$DIST"/wg-portal_*.ipk 2>/dev/null | head -1 || true)
 if [ -z "$IPK" ]; then
@@ -43,21 +48,18 @@ if [ -z "$IPK" ]; then
   exit 1
 fi
 
-echo "=== building the guest initramfs"
-rm -f initramfs-opkg.gz
-cp "$IPK" owroot/tmp/wg-portal.ipk
-cp "$HERE/vm/guest-install.sh" owroot/init
-chmod +x owroot/init
-
-( cd owroot && find . | cpio -o -H newc --quiet ) | gzip -1 > initramfs-opkg.gz
-ls -l initramfs-opkg.gz
+echo "=== building the flash of the router"
+cp "$IPK" "$GUEST_ROOT/tmp/wg-portal.ipk"
+cp "$HERE/vm/guest-install.sh" "$GUEST_ROOT/init"
+chmod +x "$GUEST_ROOT/init"
+"$HERE/vm/build-flash.sh" "$GUEST_ROOT" "$VM/flash.img" "$FLASH_MB"
 
 echo "=== booting $QEMU with the OpenWrt rootfs"
 timeout "$BOOT_TIMEOUT" "$QEMU" \
-  -M virt -cpu cortex-a53 -m 2048 -nographic -no-reboot \
-  -kernel vmlinuz-virt \
-  -initrd initramfs-opkg.gz \
-  -append "console=ttyAMA0 rdinit=/init init=/init quiet" \
+  -M virt -cpu cortex-a53 -m "$MEM_MB" -nographic -no-reboot \
+  -kernel "$OW_KERNEL" \
+  -drive "file=$VM/flash.img,format=raw,if=virtio" \
+  -append "root=/dev/vda rootfstype=ext4 rw rootwait console=ttyAMA0 init=/init" \
   < /dev/null 2>&1 | tee console-opkg.log
 
 echo "=== guest console saved to $VM/console-opkg.log"
