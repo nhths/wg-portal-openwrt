@@ -282,6 +282,12 @@ are both created there. The image brings QEMU, the WireGuard tools, the guest
 (the rootfs, the kernel and the kernel modules) and Ansible with the
 collection — the check itself needs no network.
 
+The tun device is a device of the machine the container runs on: the `tun`
+module has to be loaded there (`modprobe tun`). The runner of the group does
+not have it yet, so the check job of the pipeline fails there with
+`stat /dev/net/tun: no such file or directory` — that is why the job is
+manual: the build job stays the blocking one.
+
 ## WireGuard check
 
 `make check-wireguard` checks the whole chain, not only the web UI: the
