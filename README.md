@@ -11,19 +11,31 @@ The original task brief is in
 
 ```text
 Makefile                     the entry points
+Dockerfile                   the image of the WireGuard check
+ansible/
+  site.yml                   the OpenWrt setup of the emulated router
+  inventory.ini              the emulated router is registered by the play
+  ansible.cfg
+  requirements.yml           the collections the play needs
+  vars/main.yml              the defaults of the check
+  roles/opwrt/tasks/         the setup: the packages, the modules, the service
+  roles/tunnel/tasks/        the guest side of the check
+  roles/package/tasks/       the checks of the installation of the package
 scripts/
   build-ipk.sh               download → UPX → build the .ipk
   make-ipk.sh                assemble the .ipk from a binary
   bench.sh                   measure in an emulated arm64 guest
   check-install.sh           install the .ipk in the emulated router and run it
   check-wireguard.sh         end-to-end check of a real WireGuard tunnel
+  entrypoint.sh              the entry point of the image of the check
   portal-api.py              drive the portal API: interface, peer, config
   build-src.sh               build wg-portal from source and compare sizes
   vm/
     bench-one.sh             start one binary, measure startup time and RSS
     guest-bench.sh           /init of the measurement guest
-    guest-install.sh         /init of the install-check guest
-    guest-wireguard.sh       /init of the WireGuard guest
+    bootstrap-guest.sh       the address and the key Ansible logs in with
+    collect-packages.sh      the packages the guest is set up with
+    fetch-guest.sh           download the OpenWrt rootfs, kernel and modules
     build-flash.sh           build the 128 MB flash of the emulated router
     Dockerfile.builder       builder image: vite frontend + Go modules
 ```
@@ -41,7 +53,8 @@ The WireGuard check needs root (it creates a tap device) and `ethtool`.
 make dist           # download, pack with UPX, build the .ipk
 make bench          # measure size, startup time and RAM in an emulated guest
 make check-install  # install the .ipk in a guest OpenWrt and start it
-make check-wireguard # check a real WireGuard tunnel through the portal
+make image          # build the image of the WireGuard check
+make check-wireguard # check a real WireGuard tunnel in that image
 make build-src      # build wg-portal from source and compare the sizes
 make lint           # shellcheck + markdownlint
 ```
@@ -212,19 +225,62 @@ drop the `procd_set_param env` line in `scripts/make-ipk.sh`.
 Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on a
 128 MB ext4 flash with 512 MB of RAM — the resources of the real router. The
 flash is built with `mke2fs -d` (`scripts/vm/build-flash.sh`), attached as a
-virtio disk, and the guest boots from it directly.
+virtio disk, and the guest boots from it directly with the kernel of the
+release, the way the OpenWrt guide for QEMU describes it.
 
-Two details of that kernel shape the guest scripts:
+The guest is a real OpenWrt: it boots with its own `init` (procd), so the
+services of the packages work as they do on the router. Two things are baked
+into the flash, because Ansible needs them to get in at all:
 
-- it has **no devtmpfs**, so the device nodes (`/dev/null`, `/dev/urandom`, …)
-  are created by hand;
-- it has **no gzip decompressor for the initramfs** ("Initramfs unpacking
-  failed: compression method gzip not configured"), so the rootfs cannot live
-  in an initramfs — it lives on the flash.
+- the address of the guest (`/etc/config/network`) — the tap between the host
+  and the guest has no DHCP server;
+- the key Ansible logs in with (`/etc/dropbear/authorized_keys`).
+
+Everything else is the setup of the guest, and that is what Ansible does (see
+below).
 
 The WireGuard modules come from the OpenWrt repository: `kmod-wireguard`,
-the crypto modules it needs and `kmod-udptunnel4`/`kmod-udptunnel6`. Their
-postinstall scripts load them, `modprobe` in the guest only fills the gaps.
+the crypto modules it needs and `kmod-udptunnel4`/`kmod-udptunnel6`.
+
+## The setup of the guest, by Ansible
+
+`ansible/` converges the OpenWrt guest over SSH with the same collection the
+LAN router is converged with (`community.openwrt`): its modules are ucode
+scripts, so the guest needs no Python. The play is run by the check in two
+steps, because the guest has to be up before the portal can be started and
+the client has to be up before the tunnel can be checked:
+
+```sh
+ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags setup \
+  -e @/tmp/wgp-vm/vars.json
+ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags verify \
+  -e @/tmp/wgp-vm/vars.json
+```
+
+The `setup` tag installs the `.ipk` of the portal and the kernel modules with
+opkg, loads the WireGuard modules, writes `/etc/wg-portal/config.yaml` and
+starts the service. The `verify` tag waits for the traffic in the tunnel and
+pings the client back from the guest.
+
+The collection is installed with
+`ansible-galaxy collection install -r ansible/requirements.yml`.
+
+## The image of the check
+
+`make check-wireguard` runs the check in its own image: the emulated router
+with the portal inside and the WireGuard client next to it, in one container.
+
+```sh
+docker build -t wg-portal-check .
+docker run --rm --device /dev/net/tun --cap-add NET_ADMIN wg-portal-check
+```
+
+The container needs the tun device (`--device /dev/net/tun`) and the right to
+create the network interfaces in its namespace (`--cap-add NET_ADMIN`): the
+tap between the host and the guest and the WireGuard interface of the client
+are both created there. The image brings QEMU, the WireGuard tools, the guest
+(the rootfs, the kernel and the kernel modules) and Ansible with the
+collection — the check itself needs no network.
 
 ## WireGuard check
 
@@ -254,8 +310,8 @@ segmentation offload of the tap and drops the packets.
 
 What the check does:
 
-1. boots the emulated router, installs the `.ipk` and the WireGuard modules
-   with opkg;
+1. boots the emulated router and lets Ansible set it up (the packages, the
+   modules, the configuration, the service);
 2. creates the interface `wg0` (server mode, port 51820) and a peer through
    the API — the same API the web UI talks to (`scripts/portal-api.py`);
 3. takes the configuration the portal returns and brings the client up with
@@ -268,21 +324,74 @@ the guest pings the client back, and the counters of the interface in the
 guest grow accordingly.
 
 ```text
+=== verifying the tunnel from the guest
+TUNNEL_PING=OK
+TUNNEL_TRAFFIC 564 476
 === pinging through the tunnel
 PING 10.99.0.1 (10.99.0.1) from 10.99.0.2 wg-test: 56(84) bytes of data.
-64 bytes from 10.99.0.1: icmp_seq=1 ttl=64 time=10.3 ms
-...
-=== waiting for the guest to ping through the tunnel
-64 bytes from 10.99.0.2: seq=0 ttl=64 time=6.137 ms
-3 packets transmitted, 3 packets received, 0% packet loss
-TUNNEL_PING=OK
-TUNNEL_TRAFFIC rx=980 tx=860
+64 bytes from 10.99.0.1: icmp_seq=1 ttl=64 time=2.26 ms
+64 bytes from 10.99.0.1: icmp_seq=2 ttl=64 time=1.59 ms
+64 bytes from 10.99.0.1: icmp_seq=3 ttl=64 time=1.60 ms
+
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
 WG_STATUS=OK
 ```
+
+### The firewall of the router
+
+The guest is a stock OpenWrt, so it has a firewall (fw4) with the default
+policy `input REJECT`. The interface of the portal belongs to no zone of it,
+and the traffic of a peer is not tracked by the connection tracking: without
+a zone of its own, the echo request of the peer is rejected and the peer
+gets an "unreachable" instead of the answer.
+
+The zone has to name the **device**, not a network:
+
+```text
+config zone
+        option name 'wg'
+        list device 'wg0'
+        option input 'ACCEPT'
+```
+
+`list network 'wg0'` does not work: the interface of the portal is created by
+the portal itself and is not in `/etc/config/network`, so a network of that
+name never matches any traffic — the zone stays empty and the traffic of the
+peer keeps hitting the default policy.
+
+### The routing of the router
+
+The portal does not put the route of the peer into the main table. It gives
+the interface a firewall mark, puts the route of the peer into a table with
+the number of that mark and adds a rule that sends the marked traffic there:
+
+```text
+10.99.0.2 dev wg0 table 20003 scope link
+0:      from all lookup local
+32700:  from all fwmark 0x4e23 lookup 20003
+32766:  from all lookup main
+```
+
+The mask of the rule is empty, so it matches every packet, and the lookups
+of the guest find the route of the peer. The mark itself is never needed:
+the WireGuard module marks the encapsulated packets, not the plaintext ones.
 
 ## Caveats
 
 - The router was never touched: no `ansible`, no `opkg` on the live device.
+- The configuration of the portal is `/etc/wg-portal/config.yaml` — the init
+  script of the package points the binary at it. The keys are the sections of
+  the configuration of the portal: `core.admin_password`,
+  `web.listening_address` and `database.dsn` (the same names the environment
+  variables `WG_PORTAL_CORE_ADMIN_PASSWORD` and friends are built from).
+- The key Ansible logs into the guest with is generated by the check and lives
+  next to the flash of the router — a throwaway key for a throwaway guest, not
+  a secret of anything.
+- The dropbear of the guest generates its host keys on the first boot, and
+  under the emulation that takes minutes. The image bakes the keys in, and a
+  run on the host keeps them in the rootfs for the next one.
+- Ansible transfers the files to the guest with scp: the dropbear of OpenWrt
+  has no sftp server, so ansible falls back from sftp to scp on its own.
 - `Installed-Size` in `control` is counted in bytes (`du -sb`) — the same as in
   the stock OpenWrt packages: opkg converts the value to KiB itself
   (`pkg_size_kbs = (installed_size + 1023) / 1024`), so the Debian habit of
@@ -313,3 +422,9 @@ WG_STATUS=OK
 - The peer configuration the portal hands out carries the allowed IPs of the
   *peer* (`10.99.0.0/24` here). The client routes that network into the
   tunnel, the server uses it to check the source address of the packets.
+- The addresses of the tunnel (`10.99.0.1` and `10.99.0.2` here) have to be
+  free on the host. An address that is local there makes the answers of the
+  router arrive with a source address that is local as well, and the host
+  drops them as a martian source — the tunnel carries the traffic and nothing
+  answers. The check says so and stops instead of failing silently; the
+  image of the check has its own network namespace and is not affected.
