@@ -42,7 +42,9 @@ echo "=== packing with UPX (--best --lzma)"
 ls -l wg-portal.orig wg-portal.packed
 
 echo "=== building the .ipk"
-"$DOCKER" run --rm --platform "$PLATFORM" -v "$ROOT":/repo -w /repo/dist debian:stable-slim \
+# The builder runs as the host user: the package must belong to the user who
+# is going to install it, and a root-owned file cannot be chowned back.
+"$DOCKER" run --rm --platform "$PLATFORM" --user "$(id -u):$(id -g)" \
+  -v "$ROOT":/repo -w /repo/dist debian:stable-slim \
   bash /repo/scripts/make-ipk.sh "$ARCH" /repo/dist/wg-portal.packed "$VER"
-chown "$(id -u):$(id -g)" ./*.ipk
 ls -l ./*.ipk
