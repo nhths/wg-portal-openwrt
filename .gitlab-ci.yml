@@ -37,3 +37,12 @@ build:
   stage: build
   script:
     - make image DOCKER=podman
+
+# The end-to-end check: the emulated router with the portal inside and a
+# WireGuard client next to it, in one container. It needs a tun device, which
+# not every runner has, so it is manual.
+check:
+  stage: build
+  when: manual
+  script:
+    - make check-wireguard DOCKER=podman
