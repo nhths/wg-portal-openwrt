@@ -1,5 +1,5 @@
 ---
-# The defaults of the check. The harness (scripts/check-wireguard.sh) passes
+# The defaults of the check. The harness (scripts/check.sh) passes
 # the values of the emulated router in with -e @<file>.json as
 # "wgp_overrides" — they are merged into these.
 wgp_defaults:

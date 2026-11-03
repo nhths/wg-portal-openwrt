@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
-# End-to-end WireGuard check.
+# The checks of the portal in the emulated router (a stock OpenWrt rootfs on a
+# 128 MB flash with 512 MB of RAM).
 #
-# The packaged wg-portal runs in an emulated OpenWrt guest and manages a real
-# WireGuard server interface. Ansible sets the guest up (the OpenWrt setup:
-# the packages, the kernel modules, the configuration and the service), a client
-# on the host uses the configuration the portal hands out and pings through the
-# tunnel.
+#   check.sh install     the package: the files, the service, the answer of the
+#                        portal, a removal and a second installation
+#   check.sh wireguard   the whole chain: the portal manages a real WireGuard
+#                        server interface, a client connects with the
+#                        configuration the portal hands out and pings through
+#                        the tunnel, and the guest pings the client back
 #
-# The two are connected by a tap device, not by the user-mode network of QEMU:
-# slirp rewrites the UDP endpoints of the forwarded ports, and a WireGuard peer
-# only accepts the handshake response from the address it sent the request to.
-# Over a tap the endpoint of the client stays the same in both directions.
+# The openwrt/rootfs container cannot be used for this: its opkg refuses to
+# install local .ipk files at all, a genuine package from the OpenWrt
+# repository fails the same way.
+#
+# The setup of the guest is done by Ansible, with the same collection the LAN
+# router is converged with: its modules are ucode scripts, so the guest needs
+# no Python.
 set -euo pipefail
+
+MODE=${1:-wireguard}
+case "$MODE" in
+  install | wireguard) ;;
+  *)
+    echo "usage: $0 {install|wireguard}" >&2
+    exit 2
+    ;;
+esac
 
 QEMU=${QEMU:-qemu-system-aarch64}
 VM=${VM:-/tmp/wgp-vm}
-OW_REL=${OW_REL:-24.10.8}
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-900}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -37,79 +50,52 @@ FLASH_MB=${FLASH_MB:-128}
 TAP=${TAP:-tap-wg}
 LINK_HOST=${LINK_HOST:-10.77.0.1}
 LINK_GUEST=${LINK_GUEST:-10.77.0.2}
-LINK_NET=${LINK_NET:-10.77.0.0/24}
 
 GUEST_ROOT=$VM/rootfs
 PACKAGES=$VM/packages
 KEY=$VM/id_ed25519
-CONSOLE=$VM/console-wg.log
+CONSOLE=$VM/console-$MODE.log
 FLASH=$VM/flash.img
+PIDFILE=$VM/qemu.pid
 
 # The script needs root for the tap device, the WireGuard interface and the
 # flash image. Inside the image it already is.
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
+# The values of the machine the guest runs on are read by scripts/vm/guest.sh
+# as well, so they have to be in its environment.
+export QEMU MEM_MB BOOT_TIMEOUT LINK_HOST LINK_GUEST
+
 cleanup() {
-  [ -n "${QEMU_PID:-}" ] && kill "$QEMU_PID" 2>/dev/null || true
+  [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true
   $SUDO ip link del "$CLIENT_IF" 2>/dev/null || true
   $SUDO ip link del "$TAP" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-mkdir -p "$VM" "$PACKAGES"
+mkdir -p "$VM"
 cd "$VM"
 
-# --- the guest ----------------------------------------------------------------
+# --- the guest -------------------------------------------------------------------
 
 echo "=== fetching the OpenWrt guest"
-"$HERE/vm/fetch-guest.sh" "$VM"
+"$HERE/vm/guest.sh" fetch "$VM"
 
-# --- the bootstrap of the guest ------------------------------------------------
-
-# The setup of the guest is done by Ansible over SSH, so the guest has to be
-# reachable before Ansible can start. Two things are baked into the flash for
-# that: the address of the guest (the link has no DHCP server) and the key
-# Ansible logs in with.
 echo "=== preparing the guest for Ansible"
-"$HERE/vm/bootstrap-guest.sh" "$GUEST_ROOT" "$KEY" "$LINK_GUEST"
-
-# --- the packages ---------------------------------------------------------------
+"$HERE/vm/guest.sh" bootstrap "$GUEST_ROOT" "$KEY" "$LINK_GUEST"
 
 echo "=== collecting the packages"
-"$HERE/vm/collect-packages.sh" "$DIST" "$PACKAGES" "$VM/pkgs"
-
-# --- the flash -----------------------------------------------------------------
+"$HERE/vm/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
 
 echo "=== building the flash of the router"
-"$HERE/vm/build-flash.sh" "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
+"$HERE/vm/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
 
-# --- the link between the host and the guest ------------------------------------
+# --- the router ------------------------------------------------------------------
 
-echo "=== connecting the host and the guest with $TAP"
-$SUDO ip link del "$TAP" 2>/dev/null || true
-$SUDO ip tuntap add dev "$TAP" mode tap
-$SUDO ip addr add "$LINK_HOST/24" dev "$TAP"
-$SUDO ip link set "$TAP" up
-# The offloads of the tap are not understood by the guest: with the checksum
-# and segmentation offload on, the packets arrive broken.
-$SUDO ethtool -K "$TAP" tso off gso off gro off tx off sg off 2>/dev/null || true
+"$HERE/vm/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
 
-# --- the router ----------------------------------------------------------------
-
-echo "=== booting $QEMU"
-timeout "$BOOT_TIMEOUT" "$QEMU" \
-  -M virt -cpu cortex-a53 -m "$MEM_MB" -nographic -no-reboot \
-  -kernel "$VM/kernel.bin" \
-  -drive "file=$FLASH,format=raw,if=virtio" \
-  -append "root=/dev/vda rootfstype=ext4 rw rootwait console=ttyAMA0" \
-  -netdev "tap,id=net0,ifname=$TAP,script=no,downscript=no" \
-  -device virtio-net-pci,netdev=net0 \
-  < /dev/null > "$CONSOLE" 2>&1 &
-QEMU_PID=$!
-
-# --- the OpenWrt setup, by Ansible ----------------------------------------------
-
+# The values of the emulated router are passed to the play with them.
 cat > "$VM/vars.json" <<EOF
 {
   "wgp_overrides": {
@@ -125,17 +111,7 @@ cat > "$VM/vars.json" <<EOF
 }
 EOF
 
-# Ansible needs the guest to be up: the boot of OpenWrt under the emulation
-# takes a while, and a host that does not answer yet is "unreachable" for
-# ansible, not "failed" — it does not retry.
-echo "=== waiting for the guest"
-i=0
-until (exec 3<>/dev/tcp/"$LINK_GUEST"/22) 2>/dev/null; do
-  kill -0 "$QEMU_PID" 2>/dev/null || { echo "the guest died:"; tail -30 "$CONSOLE"; exit 1; }
-  sleep 2
-  i=$((i + 1))
-  [ $i -lt 300 ] || { echo "the guest did not come up"; tail -30 "$CONSOLE"; exit 1; }
-done
+# --- the setup of the guest, by Ansible -------------------------------------------
 
 echo "=== setting up the OpenWrt guest"
 if ! "$ANSIBLE" -i "$ANSIBLE_DIR/inventory.ini" "$ANSIBLE_DIR/site.yml" \
@@ -152,7 +128,18 @@ fi
 scp -O -q -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "root@$LINK_GUEST:/etc/dropbear/*_key" "$GUEST_ROOT/etc/dropbear/" 2>/dev/null || true
 
-# --- the interface and the peer, through the API --------------------------------
+# --- the check of the package ---------------------------------------------------------
+
+if [ "$MODE" = install ]; then
+  echo "=== checking the installation"
+  "$ANSIBLE" -i "$ANSIBLE_DIR/inventory.ini" "$ANSIBLE_DIR/site.yml" \
+    --tags package -e @"$VM/vars.json"
+
+  echo "=== guest console saved to $CONSOLE"
+  exit 0
+fi
+
+# --- the interface and the peer, through the API ----------------------------------------
 
 echo "=== creating the interface and the peer"
 python3 "$HERE/portal-api.py" \
@@ -172,7 +159,7 @@ PSK=$(sed -n 's/^PresharedKey = //p' "$VM/peer.conf")
 CLIENT_IPS=$(sed -n 's/^AllowedIPs = //p' "$VM/peer.conf")
 [ -n "$PRIVKEY" ] && [ -n "$SERVERKEY" ] || { echo "no keys in the peer config" >&2; exit 1; }
 
-# --- the client on the host -----------------------------------------------------
+# --- the client on the host ---------------------------------------------------------------
 
 # The addresses of the tunnel have to be free on the host. An address that is
 # local here makes the answers of the router arrive with a source address
@@ -206,7 +193,7 @@ $SUDO ip link set "$CLIENT_IF" up
 $SUDO ip route add "$CLIENT_IPS" dev "$CLIENT_IF"
 rm -f "$KEYFILE" "$PSKFILE"
 
-# --- the guest side of the tunnel, by Ansible ------------------------------------
+# --- the guest side of the tunnel, by Ansible ------------------------------------------------
 
 echo "=== verifying the tunnel from the guest"
 if ! "$ANSIBLE" -i "$ANSIBLE_DIR/inventory.ini" "$ANSIBLE_DIR/site.yml" \
@@ -216,7 +203,7 @@ else
   GUEST_PING="TUNNEL_PING=OK"
 fi
 
-# --- the tunnel, from the client ------------------------------------------------
+# --- the tunnel, from the client --------------------------------------------------------------
 
 # The ping comes after the verification of the guest: the firewall of the
 # router has to know the tunnel interface before the client can reach the

@@ -24,19 +24,12 @@ ansible/
 scripts/
   build-ipk.sh               download → UPX → build the .ipk
   make-ipk.sh                assemble the .ipk from a binary
-  bench.sh                   measure in an emulated arm64 guest
-  check-install.sh           install the .ipk in the emulated router and run it
-  check-wireguard.sh         end-to-end check of a real WireGuard tunnel
-  entrypoint.sh              the entry point of the image of the check
-  portal-api.py              drive the portal API: interface, peer, config
   build-src.sh               build wg-portal from source and compare sizes
+  check.sh                   the checks: the package, the WireGuard tunnel
+  bench.sh                   measure in an emulated arm64 guest
+  portal-api.py              drive the portal API: interface, peer, config
   vm/
-    bench-one.sh             start one binary, measure startup time and RSS
-    guest-bench.sh           /init of the measurement guest
-    bootstrap-guest.sh       the address and the key Ansible logs in with
-    collect-packages.sh      the packages the guest is set up with
-    fetch-guest.sh           download the OpenWrt rootfs, kernel and modules
-    build-flash.sh           build the 128 MB flash of the emulated router
+    guest.sh                 the emulated router: fetch, boot, flash
     Dockerfile.builder       builder image: vite frontend + Go modules
 ```
 
@@ -224,7 +217,7 @@ drop the `procd_set_param env` line in `scripts/make-ipk.sh`.
 
 Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on a
 128 MB ext4 flash with 512 MB of RAM — the resources of the real router. The
-flash is built with `mke2fs -d` (`scripts/vm/build-flash.sh`), attached as a
+flash is built with `mke2fs -d` (`scripts/vm/guest.sh flash`), attached as a
 virtio disk, and the guest boots from it directly with the kernel of the
 release, the way the OpenWrt guide for QEMU describes it.
 
@@ -264,6 +257,22 @@ pings the client back from the guest.
 
 The collection is installed with
 `ansible-galaxy collection install -r ansible/requirements.yml`.
+
+## The checks
+
+`scripts/check.sh` boots the emulated router and has two modes:
+
+- `install` — the package: the files opkg made of it, the service it enabled,
+  the binary that answers HTTP, and that the package can be taken away again
+  and installed once more.
+- `wireguard` — the whole chain: the portal manages a real WireGuard server
+  interface, a client connects with the configuration the portal hands out and
+  pings through the tunnel, and the guest pings the client back.
+
+```sh
+./scripts/check.sh install     # on the host
+make check-wireguard           # the same, but in the image of the check
+```
 
 ## The image of the check
 

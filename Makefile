@@ -41,7 +41,7 @@ bench: ## Measure size, startup time and RAM usage in an emulated arm64 guest
 	./scripts/bench.sh
 
 check-install: ## Install the .ipk into an emulated OpenWrt guest and start it
-	./scripts/check-install.sh
+	./scripts/check.sh install
 
 image: dist ## Build the image of the WireGuard check
 	$(DOCKER) build --platform $(PLATFORM) -t $(IMAGE):$(TAG) -f Dockerfile .

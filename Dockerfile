@@ -47,7 +47,7 @@ COPY dist/ /opt/wg-portal/dist/
 
 # The OpenWrt guest: the rootfs, the kernel and the kernel modules. They are
 # baked into the image, so the check does not need the network.
-RUN /opt/wg-portal/scripts/vm/fetch-guest.sh /opt/wg-portal/guest \
+RUN /opt/wg-portal/scripts/vm/guest.sh fetch /opt/wg-portal/guest \
  && rm -f /opt/wg-portal/guest/rootfs.img
 
 # The dropbear of the guest generates its host keys on the first boot, and
@@ -67,5 +67,7 @@ RUN apt-get update \
 # the router next to it.
 ENV VM=/opt/wg-portal/guest
 
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# The check of the WireGuard tunnel, the check of the installation of the
+# package — the mode is the argument of the container.
+ENTRYPOINT ["/opt/wg-portal/scripts/check.sh"]
+CMD ["wireguard"]

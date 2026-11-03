@@ -5,7 +5,7 @@
 # The setup is done with the same collection the real LAN router uses: its
 # modules are ucode scripts, so no Python is needed on the device.
 #
-# The play is run by scripts/check-wireguard.sh in two steps: the setup first
+# The play is run by scripts/check.sh in two steps: the setup first
 # (the guest has to be up before the portal can be started), the verification
 # of the tunnel last (the client on the host is only up by then).
 #

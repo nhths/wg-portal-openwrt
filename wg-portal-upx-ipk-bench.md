@@ -30,6 +30,10 @@ work/
   make-ipk.sh
 ```
 
+The layout above is the one of the brief. In the repository today
+`bench-one.sh` is written by `scripts/bench.sh` into the initramfs of the
+measurement guest, and `make-ipk.sh` lives in `scripts/`.
+
 ## run.sh
 
 ```bash
