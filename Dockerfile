@@ -47,7 +47,7 @@ COPY dist/ /opt/wg-portal/dist/
 
 # The OpenWrt guest: the rootfs, the kernel and the kernel modules. They are
 # baked into the image, so the check does not need the network.
-RUN /opt/wg-portal/scripts/vm/guest.sh fetch /opt/wg-portal/guest \
+RUN /opt/wg-portal/scripts/guest.sh fetch /opt/wg-portal/guest \
  && rm -f /opt/wg-portal/guest/rootfs.img
 
 # The dropbear of the guest generates its host keys on the first boot, and

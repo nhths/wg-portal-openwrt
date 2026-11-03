@@ -54,7 +54,7 @@ build-src: ## Build wg-portal from source and compare the sizes
 
 lint: ## Run shellcheck, ansible-lint and markdownlint
 	$(RUN_LINT) bash -c 'ansible-galaxy collection install -r ansible/requirements.yml \
-	  && shellcheck -S warning scripts/*.sh scripts/vm/*.sh \
+	  && shellcheck -S warning scripts/*.sh \
 	  && ansible-lint ansible/ \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/site.yml \
 	  && markdownlint --config .markdownlint.json README.md wg-portal-upx-ipk-bench.md'

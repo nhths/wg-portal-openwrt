@@ -12,6 +12,7 @@ The original task brief is in
 ```text
 Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
+Dockerfile.builder           the image that builds wg-portal from source
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
   inventory.ini              the emulated router is registered by the play
@@ -26,11 +27,9 @@ scripts/
   make-ipk.sh                assemble the .ipk from a binary
   build-src.sh               build wg-portal from source and compare sizes
   check.sh                   the checks: the package, the WireGuard tunnel
+  guest.sh                   the emulated router: fetch, boot, flash
   bench.sh                   measure in an emulated arm64 guest
   portal-api.py              drive the portal API: interface, peer, config
-  vm/
-    guest.sh                 the emulated router: fetch, boot, flash
-    Dockerfile.builder       builder image: vite frontend + Go modules
 ```
 
 Build artifacts (downloaded binaries, the packed binary, the `.ipk`) are not
@@ -217,7 +216,7 @@ drop the `procd_set_param env` line in `scripts/make-ipk.sh`.
 
 Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on a
 128 MB ext4 flash with 512 MB of RAM — the resources of the real router. The
-flash is built with `mke2fs -d` (`scripts/vm/guest.sh flash`), attached as a
+flash is built with `mke2fs -d` (`scripts/guest.sh flash`), attached as a
 virtio disk, and the guest boots from it directly with the kernel of the
 release, the way the OpenWrt guide for QEMU describes it.
 

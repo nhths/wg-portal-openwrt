@@ -63,7 +63,7 @@ PIDFILE=$VM/qemu.pid
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
-# The values of the machine the guest runs on are read by scripts/vm/guest.sh
+# The values of the machine the guest runs on are read by scripts/guest.sh
 # as well, so they have to be in its environment.
 export QEMU MEM_MB BOOT_TIMEOUT LINK_HOST LINK_GUEST
 
@@ -80,20 +80,20 @@ cd "$VM"
 # --- the guest -------------------------------------------------------------------
 
 echo "=== fetching the OpenWrt guest"
-"$HERE/vm/guest.sh" fetch "$VM"
+"$HERE/guest.sh" fetch "$VM"
 
 echo "=== preparing the guest for Ansible"
-"$HERE/vm/guest.sh" bootstrap "$GUEST_ROOT" "$KEY" "$LINK_GUEST"
+"$HERE/guest.sh" bootstrap "$GUEST_ROOT" "$KEY" "$LINK_GUEST"
 
 echo "=== collecting the packages"
-"$HERE/vm/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
+"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
 
 echo "=== building the flash of the router"
-"$HERE/vm/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
+"$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
 
 # --- the router ------------------------------------------------------------------
 
-"$HERE/vm/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
+"$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
 
 # The values of the emulated router are passed to the play with them.
 cat > "$VM/vars.json" <<EOF
