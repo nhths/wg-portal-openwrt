@@ -32,7 +32,8 @@ work/
 
 The layout above is the one of the brief. In the repository today
 `bench-one.sh` is written by `scripts/bench.sh` into the initramfs of the
-measurement guest, and `make-ipk.sh` lives in `scripts/`.
+measurement guest, and the packaging is the play `ansible/pack.yml` with the
+templates in `templates/ipk/`.
 
 ## run.sh
 

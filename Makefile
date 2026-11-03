@@ -10,11 +10,13 @@
 
 VER ?= v2.3.1
 ARCH ?= aarch64_cortex-a53
+REL ?= 1
 DOCKER ?= docker
 PLATFORM ?= linux/amd64
 QEMU ?= qemu-system-aarch64
 DIST ?= $(CURDIR)/dist
 IMAGE ?= wg-portal-check
+PKG_IMAGE ?= wg-portal-pkg
 TAG ?= $(VER)
 
 LINT_IMAGE ?= cr.knois.ru/pipelines/lint:latest
@@ -35,7 +37,11 @@ help: ## Show the available targets
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 dist: ## Pack the release binary with UPX and build the .ipk package
-	./scripts/build-ipk.sh
+	mkdir -p $(DIST)
+	$(DOCKER) build --platform $(PLATFORM) -f Dockerfile.pkg -t $(PKG_IMAGE):$(TAG) .
+	$(DOCKER) run --rm --platform $(PLATFORM) --user "$$(id -u):$$(id -g)" \
+	  -e "VER=$(VER)" -e "ARCH=$(ARCH)" -e "REL=$(REL)" \
+	  -v "$(DIST):/w" $(PKG_IMAGE):$(TAG)
 
 bench: ## Measure size, startup time and RAM usage in an emulated arm64 guest
 	./scripts/bench.sh
@@ -57,6 +63,7 @@ lint: ## Run shellcheck, ansible-lint and markdownlint
 	  && shellcheck -S warning scripts/*.sh \
 	  && ansible-lint ansible/ \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/site.yml \
+	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/pack.yml \
 	  && markdownlint --config .markdownlint.json README.md wg-portal-upx-ipk-bench.md'
 
 clean: ## Remove the build artifacts

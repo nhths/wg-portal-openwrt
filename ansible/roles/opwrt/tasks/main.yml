@@ -65,14 +65,8 @@
     mode: "0700"
 
 - name: Write the configuration of the portal
-  community.openwrt.copy:
-    content: |
-      core:
-        admin_password: {{ wgp.admin_password }}
-      web:
-        listening_address: 0.0.0.0:{{ wgp.web_port }}
-      database:
-        dsn: /tmp/wg.db
+  community.openwrt.template:
+    src: "{{ template_dir }}/openwrt/config.yaml.j2"
     dest: /etc/wg-portal/config.yaml
     mode: "0600"
 

@@ -13,8 +13,10 @@ The original task brief is in
 Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
 Dockerfile.builder           the image that builds wg-portal from source
+Dockerfile.pkg               the toolbox of the package: UPX, tar, ansible
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
+  pack.yml                   the packaging of the .ipk
   inventory.ini              the emulated router is registered by the play
   ansible.cfg
   requirements.yml           the collections the play needs
@@ -22,15 +24,20 @@ ansible/
   roles/opwrt/tasks/         the setup: the packages, the modules, the service
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
+templates/
+  ipk/                       the files of the package: init script, control
+  openwrt/                   the network of the guest, the config of the portal
 scripts/
-  build-ipk.sh               download → UPX → build the .ipk
-  make-ipk.sh                assemble the .ipk from a binary
   build-src.sh               build wg-portal from source and compare sizes
   check.sh                   the checks: the package, the WireGuard tunnel
   guest.sh                   the emulated router: fetch, boot, flash
   bench.sh                   measure in an emulated arm64 guest
   portal-api.py              drive the portal API: interface, peer, config
 ```
+
+Every file that is written into the router or into the package is a template
+in `templates/` and is rendered by Ansible — one template syntax in the
+project, and the files can be read on their own.
 
 Build artifacts (downloaded binaries, the packed binary, the `.ipk`) are not
 tracked — see `.gitignore`.
@@ -210,7 +217,21 @@ and `opkg remove` takes the package away again.
 
 The package carries no config: the path `/etc/wg-portal/config.yaml` in the
 init script is there for future use. If the file should not be required,
-drop the `procd_set_param env` line in `scripts/make-ipk.sh`.
+drop the `procd_set_param env` line in `templates/ipk/init.d.j2`.
+
+### The packaging
+
+`make dist` builds the toolbox image (`Dockerfile.pkg`) and runs it: the play
+`ansible/pack.yml` downloads the release binary, packs it with UPX, renders
+the files of the package from `templates/ipk/` and assembles the `.ipk`.
+
+```sh
+docker build -f Dockerfile.pkg -t wg-portal-pkg:local .
+docker run --rm -v "$PWD/dist:/w" wg-portal-pkg:local
+```
+
+The toolbox is Debian, because the busybox tar of Alpine does not know the
+options the package needs (`--numeric-owner`, `--owner`, `--group`).
 
 ## The emulated router
 
@@ -225,7 +246,8 @@ services of the packages work as they do on the router. Two things are baked
 into the flash, because Ansible needs them to get in at all:
 
 - the address of the guest (`/etc/config/network`) — the tap between the host
-  and the guest has no DHCP server;
+  and the guest has no DHCP server; the file is rendered from
+  `templates/openwrt/network.j2` into the rootfs before the flash is built;
 - the key Ansible logs in with (`/etc/dropbear/authorized_keys`).
 
 Everything else is the setup of the guest, and that is what Ansible does (see
@@ -238,21 +260,30 @@ the crypto modules it needs and `kmod-udptunnel4`/`kmod-udptunnel6`.
 
 `ansible/` converges the OpenWrt guest over SSH with the same collection the
 LAN router is converged with (`community.openwrt`): its modules are ucode
-scripts, so the guest needs no Python. The play is run by the check in two
-steps, because the guest has to be up before the portal can be started and
-the client has to be up before the tunnel can be checked:
+scripts, so the guest needs no Python. The play is run by the check in three
+steps, because the network of the guest has to be in the flash before it
+boots, the guest has to be up before the portal can be started and the client
+has to be up before the tunnel can be checked:
 
 ```sh
+ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags net \
+  -e @/tmp/wgp-vm/vars.json
 ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags setup \
   -e @/tmp/wgp-vm/vars.json
 ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags verify \
   -e @/tmp/wgp-vm/vars.json
 ```
 
-The `setup` tag installs the `.ipk` of the portal and the kernel modules with
-opkg, loads the WireGuard modules, writes `/etc/wg-portal/config.yaml` and
-starts the service. The `verify` tag waits for the traffic in the tunnel and
-pings the client back from the guest.
+The `net` tag writes `/etc/config/network` into the rootfs of the guest, on
+the controller — the router is not up yet. The `setup` tag installs the `.ipk`
+of the portal and the kernel modules with opkg, loads the WireGuard modules,
+writes `/etc/wg-portal/config.yaml` and starts the service. The `verify` tag
+waits for the traffic in the tunnel and pings the client back from the guest.
+
+The files the play writes are rendered from `templates/openwrt/` — the
+configuration of the portal is `templates/openwrt/config.yaml.j2`, and the
+`community.openwrt.template` module renders it on the controller and copies
+the result to the guest.
 
 The collection is installed with
 `ansible-galaxy collection install -r ansible/requirements.yml`.

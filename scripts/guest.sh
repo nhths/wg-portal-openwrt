@@ -4,7 +4,7 @@
 # One script, five steps:
 #
 #   fetch      download the rootfs, the kernel and the kernel modules
-#   bootstrap  the network of the guest and the key Ansible logs in with
+#   bootstrap  the key Ansible logs in with
 #   packages   collect the .ipk of the portal and the kernel modules
 #   flash      build the 128 MB flash of the router
 #   boot       create the tap, start QEMU and wait for the guest
@@ -12,7 +12,7 @@
 # The step is the first argument:
 #
 #   guest.sh fetch      <dir>
-#   guest.sh bootstrap  <rootfs-dir> <key-file> <address>
+#   guest.sh bootstrap  <rootfs-dir> <key-file>
 #   guest.sh packages   <dist-dir> <target-dir> <kernel-modules-dir>
 #   guest.sh flash      <rootfs-dir> <image> [size-mb]
 #   guest.sh boot       <flash-image> <kernel> <tap> <console> <pidfile>
@@ -88,31 +88,17 @@ fetch() {
 # --- the guest for Ansible ------------------------------------------------------
 
 # The setup of the guest is done by Ansible over SSH, so the guest has to be
-# reachable before Ansible can start. Two things are baked into the flash for
-# that: the address of the guest (the link has no DHCP server) and the key
-# Ansible logs in with. The stock rootfs carries no network configuration at
-# all, so the loopback is written here as well — without it nothing on the
-# guest can talk to itself, the portal included.
+# reachable before Ansible can start. The key Ansible logs in with is baked
+# into the flash for that; the network of the guest is written into the
+# rootfs by the play (templates/openwrt/network.j2), because it has to be in
+# the flash before the router boots.
 bootstrap() {
-  local rootfs=$1 key=$2 address=$3
+  local rootfs=$1 key=$2
 
   if [ ! -f "$key" ]; then
     echo "=== generating the key Ansible logs in with"
     ssh-keygen -t ed25519 -N '' -f "$key" -q
   fi
-
-  cat > "$rootfs/etc/config/network" <<EOF
-config interface 'loopback'
-	option device 'lo'
-	option proto 'static'
-	option ipaddr '127.0.0.1/8'
-
-config interface 'lan'
-	option device 'eth0'
-	option proto 'static'
-	option ipaddr '$address'
-	option netmask '255.255.255.0'
-EOF
 
   mkdir -p "$rootfs/etc/dropbear"
   cp "$key.pub" "$rootfs/etc/dropbear/authorized_keys"
@@ -202,7 +188,7 @@ boot() {
 
 case "${1:-}" in
   fetch) fetch "${2:?the target directory}" ;;
-  bootstrap) bootstrap "${2:?the rootfs directory}" "${3:?the key file}" "${4:?the address of the guest}" ;;
+  bootstrap) bootstrap "${2:?the rootfs directory}" "${3:?the key file}" ;;
   packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the target directory}" "${4:?the directory with the kernel module packages}" ;;
   flash) flash "${2:?the rootfs directory}" "${3:?the image to create}" "${4:-128}" ;;
   boot) boot "${2:?the flash image}" "${3:?the kernel}" "${4:?the tap device}" "${5:?the console file}" "${6:?the pid file}" ;;

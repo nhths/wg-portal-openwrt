@@ -43,6 +43,7 @@ ENV ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote
 
 COPY ansible/ /opt/wg-portal/ansible/
 COPY scripts/ /opt/wg-portal/scripts/
+COPY templates/ /opt/wg-portal/templates/
 COPY dist/ /opt/wg-portal/dist/
 
 # The OpenWrt guest: the rootfs, the kernel and the kernel modules. They are

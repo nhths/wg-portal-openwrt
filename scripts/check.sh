@@ -77,24 +77,6 @@ trap cleanup EXIT
 mkdir -p "$VM"
 cd "$VM"
 
-# --- the guest -------------------------------------------------------------------
-
-echo "=== fetching the OpenWrt guest"
-"$HERE/guest.sh" fetch "$VM"
-
-echo "=== preparing the guest for Ansible"
-"$HERE/guest.sh" bootstrap "$GUEST_ROOT" "$KEY" "$LINK_GUEST"
-
-echo "=== collecting the packages"
-"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
-
-echo "=== building the flash of the router"
-"$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
-
-# --- the router ------------------------------------------------------------------
-
-"$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
-
 # The values of the emulated router are passed to the play with them.
 cat > "$VM/vars.json" <<EOF
 {
@@ -106,10 +88,33 @@ cat > "$VM/vars.json" <<EOF
     "wg_port": $WG_PORT,
     "admin_password": "$ADMIN_PASSWORD",
     "key_file": "$KEY",
-    "package_dir": "$PACKAGES"
+    "package_dir": "$PACKAGES",
+    "rootfs": "$GUEST_ROOT"
   }
 }
 EOF
+
+# --- the guest -------------------------------------------------------------------
+
+echo "=== fetching the OpenWrt guest"
+"$HERE/guest.sh" fetch "$VM"
+
+echo "=== writing the network of the guest"
+"$ANSIBLE" -i "$ANSIBLE_DIR/inventory.ini" "$ANSIBLE_DIR/site.yml" \
+  --tags net -e @"$VM/vars.json"
+
+echo "=== preparing the guest for Ansible"
+"$HERE/guest.sh" bootstrap "$GUEST_ROOT" "$KEY"
+
+echo "=== collecting the packages"
+"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
+
+echo "=== building the flash of the router"
+"$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
+
+# --- the router ------------------------------------------------------------------
+
+"$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
 
 # --- the setup of the guest, by Ansible -------------------------------------------
 

@@ -2,6 +2,11 @@
 # The defaults of the check. The harness (scripts/check.sh) passes
 # the values of the emulated router in with -e @<file>.json as
 # "wgp_overrides" — they are merged into these.
+
+# The templates of the project: the files that are written into the router
+# and into the package are rendered from them.
+template_dir: "{{ playbook_dir }}/../templates"
+
 wgp_defaults:
   # The portal inside the guest.
   web_port: 8888
@@ -17,6 +22,9 @@ wgp_defaults:
   # The guest and the key the harness connects with.
   link_guest: 10.77.0.2
   key_file: /tmp/wgp-vm/id_ed25519
+  # The rootfs of the guest: the network is written into it before the flash
+  # is built.
+  rootfs: /tmp/wgp-vm/rootfs
 
   # The packages of the guest, in the order they are installed in. The order
   # is the order of the dependencies: opkg resolves a dependency against the
