@@ -187,6 +187,12 @@ Built: `wg-portal_2.3.1-1_aarch64_cortex-a53.ipk` (9.9 MB) — the
 `--best --lzma` variant, for the router architecture
 (`mediatek/filogic` → `aarch64_cortex-a53`).
 
+The target is the router of the LAN: RouteRich AX3000 v1 (ARMv8,
+`mediatek/filogic`, kernel 6.6.144) on RouteRich 24.10.8. It runs the same
+OpenWrt release and the same kernel the guest of the check emulates, and
+its `opkg print-architecture` is `aarch64_cortex-a53` — the architecture
+of the package.
+
 The structure is verified: an outer archive of `debian-binary`,
 `control.tar.gz`, `data.tar.gz`; `control` carries
 `Architecture: aarch64_cortex-a53`; `data` carries `usr/bin/wg-portal` (755)
