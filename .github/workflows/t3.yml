@@ -1,0 +1,10 @@
+name: t3
+on:
+  workflow_dispatch:
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  t3:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
