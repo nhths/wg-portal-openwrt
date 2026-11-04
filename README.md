@@ -14,6 +14,9 @@ Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
 Dockerfile.builder           the image that builds wg-portal from source
 Dockerfile.pkg               the toolbox of the package: UPX, tar, Jinja2
+.github/workflows/
+  wg-portal-release.yml      the workflow of the release: the portal is checked
+                             for updates every two weeks
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
   inventory.ini              the emulated router is registered by the play
@@ -243,6 +246,27 @@ docker run --rm -v "$PWD/dist:/w" wg-portal-pkg:local
 
 The toolbox is Debian, because the busybox tar of Alpine does not know the
 options the package needs (`--numeric-owner`, `--owner`, `--group`).
+
+## The workflow of the release
+
+`.github/workflows/wg-portal-release.yml` is a GitHub Actions workflow. Every
+two weeks (the 1st and the 15th of the month) it looks for a new release of
+the portal (`h44z/wg-portal`). If there is one, it builds the package, checks
+it in the emulated OpenWrt — the same check as `make check-wireguard`, the
+package is installed with opkg and a real WireGuard tunnel is made through it
+— and publishes the `.ipk` as a release of the repository.
+
+The state of the workflow is the release itself: if the version of the portal
+is already released here, the run does nothing. The run can also be started by
+hand (`workflow_dispatch`), with the version of the portal as the argument.
+
+The workflow runs the code of the repository it is in, so the GitHub copy of
+the project is the one the Actions run in; the GitLab repository is the source
+of truth.
+
+Two things to know about the scheduled runs: GitHub delays them (a run can
+start an hour after its time), and it stops them altogether if the repository
+has no activity for 60 days — a commit or a manual run brings them back.
 
 ## The emulated router
 

@@ -1,2 +1,5 @@
 # Build artifacts: downloaded binaries, the packed binary, the .ipk, logs.
 dist/
+
+# The cache of Ansible: the collection and the roles it downloads.
+.ansible/
