@@ -7,9 +7,9 @@
 # wgctrl cannot be created and wg-portal panics on startup. A full system
 # emulation has a real arm64 kernel and behaves like the device.
 #
-# The guest is an initramfs of Alpine with two scripts in it: the init of
-# the guest, written here, and the measurement of one binary, which is a
-# file of its own (scripts/bench-one.sh) copied into the initramfs.
+# The guest is an initramfs of Alpine with two scripts in it, both files of
+# their own (scripts/bench-init.sh and scripts/bench-one.sh) copied into the
+# initramfs.
 set -euo pipefail
 
 QEMU=${QEMU:-qemu-system-aarch64}
@@ -35,28 +35,8 @@ mkdir -p root
 tar -xzf "alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz" -C root
 mkdir -p root/proc root/sys root/dev root/tmp root/work
 cp "$DIST/wg-portal.orig" "$DIST/wg-portal.packed" root/work/
+cp "$HERE/bench-init.sh" root/init
 cp "$HERE/bench-one.sh" root/work/bench-one.sh
-
-# The init of the guest: it mounts what it needs and measures every binary in
-# /work.
-cat > root/init <<'INIT'
-#!/bin/sh
-mount -t proc     none /proc
-mount -t sysfs    none /sys
-mount -t devtmpfs none /dev
-mount -t tmpfs    none /tmp
-ip link set lo up
-
-echo "=== guest up: $(uname -a)"
-cd /work || exit 1
-for v in orig packed; do
-  echo "=== $v"
-  sh /work/bench-one.sh /work/wg-portal.$v
-done
-echo "=== bench done"
-sync
-poweroff -f
-INIT
 
 chmod +x root/init root/work/bench-one.sh
 
@@ -65,7 +45,7 @@ ls -l initramfs.gz
 
 echo "=== booting $QEMU"
 timeout "$BOOT_TIMEOUT" "$QEMU" \
-  -M virt -cpu cortex-a53 -m 2048 -nographic -no-reboot \
+  -M virt -cpu cortex-a53 -m 512 -nographic -no-reboot \
   -kernel vmlinuz-virt \
   -initrd initramfs.gz \
   -append "console=ttyAMA0 rdinit=/init init=/init quiet" \

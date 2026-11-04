@@ -32,6 +32,7 @@ scripts/
   check.sh                   the checks: the package, the WireGuard tunnel
   guest.sh                   the emulated router: fetch, boot, flash
   bench.sh                   measure in an emulated arm64 guest
+  bench-init.sh              the init of the measurement guest
   bench-one.sh               measure one binary: the startup time and the RSS
   portal-api.py              drive the portal API: interface, peer, config
 ```
