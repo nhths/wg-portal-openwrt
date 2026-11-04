@@ -1,8 +1,10 @@
 #!/bin/sh
 # Start one wg-portal binary and measure its startup time and RSS.
 #
-# POSIX sh: runs in the emulated guest and on the router itself.
-#   sh bench-one.sh /work/wg-portal.packed
+# POSIX sh, so it runs in the measurement guest (busybox), in an Alpine
+# container and directly on the router.
+#
+# Usage: bench-one.sh /path/to/wg-portal
 BIN=$1
 export WG_PORTAL_CORE_ADMIN_PASSWORD=bench-password-1234567
 export WG_PORTAL_WEB_LISTENING_ADDRESS=127.0.0.1:8888

@@ -1,0 +1,85 @@
+---
+# The checks of the installation of the package: what opkg made of it, the
+# service it enabled, the binary that answers HTTP — and that the package can
+# be taken away again and installed once more.
+- name: Read the status of the package
+  community.openwrt.command:
+    cmd: "opkg status wg-portal"
+  register: package_status
+  changed_when: false
+
+- name: Report the status of the package
+  ansible.builtin.debug:
+    msg: "{{ package_status.stdout }}"
+
+- name: Read the files of the package
+  community.openwrt.command:
+    cmd: "opkg files wg-portal"
+  register: package_files
+  changed_when: false
+
+- name: Report the files of the package
+  ansible.builtin.debug:
+    msg: "{{ package_files.stdout }}"
+
+- name: Read the services of the package
+  community.openwrt.command:
+    cmd: "ls -l /etc/rc.d/ | grep wg-portal || true"
+    uses_shell: true
+  register: package_services
+  changed_when: false
+
+- name: Report the services of the package
+  ansible.builtin.debug:
+    msg: "{{ package_services.stdout }}"
+
+- name: Wait for the portal to answer
+  community.openwrt.command:
+    cmd: "wget -q -O /dev/null http://127.0.0.1:{{ wgp.web_port }}/api/v0/auth/providers"
+  register: package_http
+  until: package_http.rc == 0
+  retries: 90
+  delay: 2
+
+- name: Measure the memory of the portal
+  community.openwrt.command:
+    cmd: "grep -E 'VmHWM|VmRSS' /proc/$(pidof wg-portal)/status"
+    uses_shell: true
+  register: package_memory
+  changed_when: false
+
+- name: Report the memory of the portal
+  ansible.builtin.debug:
+    msg: "{{ package_memory.stdout }}"
+
+- name: Remove the package
+  community.openwrt.opkg:
+    name: wg-portal
+    state: absent
+
+- name: Check that the package is gone
+  community.openwrt.command:
+    cmd: "opkg status wg-portal"
+  register: package_removed
+  changed_when: false
+  failed_when: package_removed.stdout | trim != ''
+
+- name: Install the package again
+  # The dependency is still installed, so opkg resolves it without the feed.
+  community.openwrt.command:
+    cmd: "opkg install /tmp/{{ wgp.package }}"
+  changed_when: false
+  register: package_reinstall
+
+- name: Read the status of the package again
+  community.openwrt.command:
+    cmd: "opkg status wg-portal"
+  register: package_reinstalled
+  changed_when: false
+
+- name: Check that the package is installed again
+  ansible.builtin.assert:
+    that:
+      - "'Status: install user installed' in package_reinstalled.stdout"
+    fail_msg: "the package was not installed again"
+    quiet: true

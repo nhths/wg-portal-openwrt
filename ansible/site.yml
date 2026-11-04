@@ -1,0 +1,66 @@
+---
+# The OpenWrt setup of the emulated router of the WireGuard check.
+#
+# The guest is a stock OpenWrt 24.10.8 on the flash of the emulated router.
+# The setup is done with the same collection the real LAN router uses: its
+# modules are ucode scripts, so no Python is needed on the device.
+#
+# The play is run by scripts/check.sh in three steps: the network of the
+# guest first (it has to be in the flash before the router boots), the setup
+# next (the guest has to be up before the portal can be started), the
+# verification of the tunnel last (the client on the host is only up by then).
+#
+#   ansible-playbook ansible/site.yml --tags net
+#   ansible-playbook ansible/site.yml --tags setup
+#   ansible-playbook ansible/site.yml --tags verify
+#
+# The values of the emulated router are passed in by the harness:
+#
+#   ansible-playbook ansible/site.yml --tags setup -e @/tmp/wgp-vm/vars.json
+
+- name: Register the emulated router
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/main.yml
+  vars:
+    wgp: "{{ wgp_defaults | combine(wgp_overrides | default({})) }}"
+  tasks:
+    - name: Add the guest to the inventory
+      ansible.builtin.add_host:
+        name: router
+        groups: guest
+        ansible_host: "{{ wgp.link_guest }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ wgp.key_file }}"
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout=10
+      # The guest has to be in the inventory whatever tags are chosen.
+      tags: [always]
+
+    - name: Write the network of the guest into the rootfs
+      # The tap between the host and the guest has no DHCP server, so the
+      # address of the guest has to be in the flash before the router boots:
+      # Ansible needs SSH to get into the guest at all.
+      ansible.builtin.template:
+        src: "{{ template_dir }}/openwrt/network.j2"
+        dest: "{{ wgp.rootfs }}/etc/config/network"
+        mode: "0644"
+      tags: [net]
+
+- name: Set up the OpenWrt guest
+  hosts: guest
+  gather_facts: false
+  vars_files:
+    - vars/main.yml
+  vars:
+    wgp: "{{ wgp_defaults | combine(wgp_overrides | default({})) }}"
+  roles:
+    - role: opwrt
+      tags: [setup]
+    - role: tunnel
+      tags: [verify]
+    - role: package
+      tags: [package]

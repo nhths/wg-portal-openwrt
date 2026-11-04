@@ -6,6 +6,10 @@
 # socket(AF_NETLINK, ..., NETLINK_GENERIC) returns EPROTONOSUPPORT, so
 # wgctrl cannot be created and wg-portal panics on startup. A full system
 # emulation has a real arm64 kernel and behaves like the device.
+#
+# The guest is an initramfs of Alpine with two scripts in it, both files of
+# their own (scripts/bench-init.sh and scripts/bench-one.sh) copied into the
+# initramfs.
 set -euo pipefail
 
 QEMU=${QEMU:-qemu-system-aarch64}
@@ -31,16 +35,17 @@ mkdir -p root
 tar -xzf "alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz" -C root
 mkdir -p root/proc root/sys root/dev root/tmp root/work
 cp "$DIST/wg-portal.orig" "$DIST/wg-portal.packed" root/work/
-cp "$HERE/vm/bench-one.sh" root/work/
-cp "$HERE/vm/guest-bench.sh" root/init
-chmod +x root/init
+cp "$HERE/bench-init.sh" root/init
+cp "$HERE/bench-one.sh" root/work/bench-one.sh
+
+chmod +x root/init root/work/bench-one.sh
 
 ( cd root && find . | cpio -o -H newc --quiet ) | gzip -1 > initramfs.gz
 ls -l initramfs.gz
 
 echo "=== booting $QEMU"
 timeout "$BOOT_TIMEOUT" "$QEMU" \
-  -M virt -cpu cortex-a53 -m 2048 -nographic -no-reboot \
+  -M virt -cpu cortex-a53 -m 512 -nographic -no-reboot \
   -kernel vmlinuz-virt \
   -initrd initramfs.gz \
   -append "console=ttyAMA0 rdinit=/init init=/init quiet" \

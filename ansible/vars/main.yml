@@ -1,0 +1,59 @@
+---
+# The defaults of the check. The harness (scripts/check.sh) passes
+# the values of the emulated router in with -e @<file>.json as
+# "wgp_overrides" — they are merged into these.
+
+# The templates of the project: the files that are written into the router
+# and into the package are rendered from them.
+template_dir: "{{ playbook_dir }}/../templates"
+
+wgp_defaults:
+  # The portal inside the guest.
+  web_port: 8888
+  wg_port: 51820
+  admin_password: wg-portal-check-password
+  interface: wg0
+
+  # The tunnel.
+  server_addr: 10.99.0.1
+  client_addr: 10.99.0.2
+  subnet: 10.99.0.0/24
+
+  # The guest and the key the harness connects with.
+  link_guest: 10.77.0.2
+  key_file: /tmp/wgp-vm/id_ed25519
+  # The rootfs of the guest: the network is written into it before the flash
+  # is built.
+  rootfs: /tmp/wgp-vm/rootfs
+
+  # The package that is copied to the guest: the portal. The kernel modules
+  # come from the feed below — opkg pulls them in as the dependencies of the
+  # portal, the way it does on the router.
+  package: wg-portal.ipk
+
+  # The feed with the kernel modules. The url is the directory of the feed:
+  # opkg takes the index and the packages of it from there. The index is the
+  # one of the repository, with its signature — opkg checks the signature
+  # against the keys of the firmware.
+  feed_url: http://10.77.0.1:18080
+
+  # The kernel modules the WireGuard one needs.
+  modules:
+    - libcurve25519-generic
+    - poly1305-neon
+    - libchacha20poly1305
+    - udp_tunnel
+    - ip6_udp_tunnel
+    - wireguard
+
+  # opkg takes its architecture list from the "arch <name> <priority>" lines of
+  # opkg.conf, and refuses a package whose architecture is not in the list.
+  # The stock rootfs has no such lines at all. The portal is built for the
+  # architecture of the router (aarch64_cortex-a53), the kernel modules for
+  # the one of the OpenWrt build (aarch64_generic), and "all" and "any" are the
+  # pseudo-architectures of the packages that do not depend on the build.
+  architectures:
+    - "all 1"
+    - "any 2"
+    - "aarch64_generic 10"
+    - "aarch64_cortex-a53 10"

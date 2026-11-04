@@ -20,7 +20,7 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 
 echo "=== building the builder image"
-$DOCKER build --platform "$PLATFORM" -f "$HERE/vm/Dockerfile.builder" -t wg-portal-builder:local "$SRC"
+$DOCKER build --platform "$PLATFORM" -f "$(dirname "$HERE")/Dockerfile.builder" -t wg-portal-builder:local "$SRC"
 
 # build_variant <name> <go build flags> [source tree preparation snippet]
 build_variant() {
