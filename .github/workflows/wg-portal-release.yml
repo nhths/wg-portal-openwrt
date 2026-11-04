@@ -18,6 +18,11 @@ on:
     # The 1st and the 15th of the month, 06:17 UTC. GitHub runs the scheduled
     # workflows with a delay, and the top of the hour is crowded.
     - cron: "17 6 1,15 * *"
+  push:
+    # A change of the workflow itself runs it once: the run does nothing if the
+    # version of the portal is already released here.
+    branches: [master]
+    paths: ['.github/workflows/wg-portal-release.yml']
   workflow_dispatch:
     inputs:
       version:
@@ -41,7 +46,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out the project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Find the version of the portal
         id: portal
@@ -129,7 +134,7 @@ jobs:
 
       - name: Keep the package as an artifact of the run
         if: steps.state.outputs.build == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wg-portal-${{ steps.portal.outputs.version }}
           path: dist/*.ipk
