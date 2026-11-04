@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out the project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Find the version of the portal
         id: portal
@@ -134,7 +134,7 @@ jobs:
 
       - name: Keep the package as an artifact of the run
         if: steps.state.outputs.build == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wg-portal-${{ steps.portal.outputs.version }}
           path: dist/*.ipk
