@@ -63,7 +63,6 @@ lint: ## Run shellcheck, ansible-lint and markdownlint
 	  && shellcheck -S warning scripts/*.sh \
 	  && ansible-lint ansible/ \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/site.yml \
-	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/pack.yml \
 	  && markdownlint --config .markdownlint.json README.md wg-portal-upx-ipk-bench.md'
 
 clean: ## Remove the build artifacts

@@ -13,21 +13,21 @@ The original task brief is in
 Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
 Dockerfile.builder           the image that builds wg-portal from source
-Dockerfile.pkg               the toolbox of the package: UPX, tar, ansible
+Dockerfile.pkg               the toolbox of the package: UPX, tar, Jinja2
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
-  pack.yml                   the packaging of the .ipk
   inventory.ini              the emulated router is registered by the play
   ansible.cfg
   requirements.yml           the collections the play needs
   vars/main.yml              the defaults of the check
-  roles/opwrt/tasks/         the setup: the packages, the modules, the service
+  roles/opwrt/tasks/         the setup: the feed, the portal, the service
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
 templates/
   ipk/                       the files of the package: init script, control
   openwrt/                   the network of the guest, the config of the portal
 scripts/
+  build-ipk.sh               download → UPX → build the .ipk
   build-src.sh               build wg-portal from source and compare sizes
   check.sh                   the checks: the package, the WireGuard tunnel
   guest.sh                   the emulated router: fetch, boot, flash
@@ -36,8 +36,10 @@ scripts/
 ```
 
 Every file that is written into the router or into the package is a template
-in `templates/` and is rendered by Ansible — one template syntax in the
-project, and the files can be read on their own.
+in `templates/` and is rendered with Jinja2 — one template syntax in the
+project, and the files can be read on their own. The router is configured by
+Ansible (it renders the templates on the controller), the package by the
+script that builds it.
 
 Build artifacts (downloaded binaries, the packed binary, the `.ipk`) are not
 tracked — see `.gitignore`.
@@ -227,9 +229,10 @@ drop the `procd_set_param env` line in `templates/ipk/init.d.j2`.
 
 ### The packaging
 
-`make dist` builds the toolbox image (`Dockerfile.pkg`) and runs it: the play
-`ansible/pack.yml` downloads the release binary, packs it with UPX, renders
-the files of the package from `templates/ipk/` and assembles the `.ipk`.
+`make dist` builds the toolbox image (`Dockerfile.pkg`) and runs it: the
+script `scripts/build-ipk.sh` downloads the release binary, packs it with
+UPX, renders the files of the package from `templates/ipk/` and assembles the
+`.ipk`.
 
 ```sh
 docker build -f Dockerfile.pkg -t wg-portal-pkg:local .

@@ -1,5 +1,5 @@
-# The toolbox of the package: ansible renders the templates of the package and
-# assembles it, UPX packs the binary and GNU tar builds the archive.
+# The toolbox of the package: UPX to pack the binary, GNU tar to assemble the
+# .ipk and Jinja2 to render the files of the package.
 #
 #   docker build -f Dockerfile.pkg -t wg-portal-pkg:local .
 #   docker run --rm -v "$PWD/dist:/w" wg-portal-pkg:local
@@ -18,22 +18,9 @@ RUN apt-get update \
       curl \
       file \
       python3 \
-      python3-venv \
+      python3-jinja2 \
       xz-utils \
  && rm -rf /var/lib/apt/lists/*
-
-# Ansible renders the templates of the package — the same engine the setup of
-# the router uses, so there is one template syntax in the project.
-RUN python3 -m venv /opt/venv \
- && /opt/venv/bin/pip install --no-cache-dir "ansible-core>=2.16,<2.19"
-
-ENV PATH=/opt/venv/bin:$PATH
-# The container runs as the user of the host, which has no home directory in
-# the image: the temporary files of ansible have to live in /tmp.
-ENV ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
-    ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote \
-    ANSIBLE_CONFIG=/opt/wg-portal/ansible/ansible.cfg \
-    HOME=/tmp
 
 # The release of UPX for Linux is a static binary. The check at the end of the
 # line fails the build right here if the image is not the platform the
@@ -45,8 +32,8 @@ RUN curl -fsSL -o /tmp/upx.tar.xz \
  && rm -rf /tmp/upx* \
  && upx --version
 
-COPY ansible/ /opt/wg-portal/ansible/
+COPY scripts/build-ipk.sh /opt/wg-portal/build-ipk.sh
 COPY templates/ /opt/wg-portal/templates/
 
 WORKDIR /w
-ENTRYPOINT ["ansible-playbook", "-i", "/opt/wg-portal/ansible/inventory.ini", "/opt/wg-portal/ansible/pack.yml"]
+ENTRYPOINT ["/opt/wg-portal/build-ipk.sh"]
