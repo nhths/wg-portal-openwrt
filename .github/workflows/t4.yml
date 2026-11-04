@@ -1,0 +1,13 @@
+name: t4
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: wg-portal-release
+  cancel-in-progress: false
+jobs:
+  t4:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
