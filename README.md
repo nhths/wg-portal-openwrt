@@ -232,6 +232,45 @@ The package carries no config: the path `/etc/wg-portal/config.yaml` in the
 init script is there for future use. If the file should not be required,
 drop the `procd_set_param env` line in `templates/ipk/init.d.j2`.
 
+### The installation on the router
+
+opkg installs a package from an url by itself, so the package is installed
+on the router with one command:
+
+```sh
+opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk
+```
+
+The name of the asset is the same in every release, so the command does not
+change; the version is in the release and in the package itself. A newer
+release is installed with the same command — opkg sees the version in the
+package and upgrades.
+
+The dependency of the package, the WireGuard kernel module, opkg pulls in
+itself — from the feeds of the firmware, so the router needs the internet.
+If the feeds are not reachable, the module has to be installed first, or the
+package with `opkg install --force-depends`.
+
+The package carries no configuration, so the portal is written by hand
+before the first start:
+
+```sh
+mkdir -p /etc/wg-portal
+cat > /etc/wg-portal/config.yaml <<'EOF'
+core:
+  admin_password: the-password-of-the-portal
+web:
+  listening_address: 0.0.0.0:8888
+database:
+  dsn: /etc/wg-portal/wg.db
+EOF
+/etc/init.d/wg-portal enable
+/etc/init.d/wg-portal start
+```
+
+The `dsn` is on the flash and not in `/tmp`: `/tmp` is a tmpfs, so the
+database of the portal is gone after a reboot.
+
 ### The packaging
 
 `make dist` builds the toolbox image (`Dockerfile.pkg`) and runs it: the

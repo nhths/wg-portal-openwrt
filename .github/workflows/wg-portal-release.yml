@@ -104,11 +104,15 @@ jobs:
             echo "(\`mediatek/filogic\`, \`aarch64_cortex-a53\`), kernel 6.6.144."
             echo
             echo '```sh'
-            echo "opkg install $(basename "$ipk")"
+            echo "opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk"
             echo '```'
             echo
+            echo "The name of the asset is the same in every release, so the command does not"
+            echo "change: the version is in the release and in the package itself."
+            echo
             echo "The dependency of the package, the WireGuard kernel module, opkg pulls in"
-            echo "itself. The package carries no configuration: write"
+            echo "itself — from the feeds of the firmware, so the router needs the internet."
+            echo "The package carries no configuration: write"
             echo "\`/etc/wg-portal/config.yaml\` and start the service."
             echo
             echo "| file | bytes |"
@@ -128,7 +132,11 @@ jobs:
           set -euo pipefail
           version="${{ steps.portal.outputs.version }}"
           ipk=$(ls dist/wg-portal_*.ipk)
-          gh release create "$version" "$ipk" \
+          # The same package under a name that does not change from release to
+          # release: the url of it is the one that is put on the router, and it
+          # stays the same whatever the version is.
+          cp "$ipk" dist/wg-portal.ipk
+          gh release create "$version" "$ipk" dist/wg-portal.ipk \
             --title "wg-portal $version for OpenWrt (aarch64_cortex-a53)" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
