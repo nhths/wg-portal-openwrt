@@ -53,10 +53,14 @@ LINK_GUEST=${LINK_GUEST:-10.77.0.2}
 
 GUEST_ROOT=$VM/rootfs
 PACKAGES=$VM/packages
+FEED=$VM/feed
 KEY=$VM/id_ed25519
 CONSOLE=$VM/console-$MODE.log
 FLASH=$VM/flash.img
 PIDFILE=$VM/qemu.pid
+# The port the feed of the kernel modules is served on: the guest fetches the
+# index and the packages of it from the host.
+FEED_PORT=${FEED_PORT:-18080}
 
 # The script needs root for the tap device, the WireGuard interface and the
 # flash image. Inside the image it already is.
@@ -69,6 +73,7 @@ export QEMU MEM_MB BOOT_TIMEOUT LINK_HOST LINK_GUEST
 
 cleanup() {
   [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true
+  [ -f "$VM/feed.pid" ] && kill "$(cat "$VM/feed.pid")" 2>/dev/null || true
   $SUDO ip link del "$CLIENT_IF" 2>/dev/null || true
   $SUDO ip link del "$TAP" 2>/dev/null || true
 }
@@ -89,7 +94,8 @@ cat > "$VM/vars.json" <<EOF
     "admin_password": "$ADMIN_PASSWORD",
     "key_file": "$KEY",
     "package_dir": "$PACKAGES",
-    "rootfs": "$GUEST_ROOT"
+    "rootfs": "$GUEST_ROOT",
+    "feed_url": "http://$LINK_HOST:$FEED_PORT"
   }
 }
 EOF
@@ -107,7 +113,7 @@ echo "=== preparing the guest for Ansible"
 "$HERE/guest.sh" bootstrap "$GUEST_ROOT" "$KEY"
 
 echo "=== collecting the packages"
-"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs"
+"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs" "$FEED"
 
 echo "=== building the flash of the router"
 "$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
@@ -115,6 +121,13 @@ echo "=== building the flash of the router"
 # --- the router ------------------------------------------------------------------
 
 "$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
+
+# The feed of the kernel modules: opkg knows no file:// url, so the guest
+# fetches the index and the packages of it over HTTP from the host.
+echo "=== serving the feed of the kernel modules"
+python3 -m http.server "$FEED_PORT" --directory "$FEED" --bind "$LINK_HOST" \
+  > "$VM/feed.log" 2>&1 &
+echo $! > "$VM/feed.pid"
 
 # --- the setup of the guest, by Ansible -------------------------------------------
 

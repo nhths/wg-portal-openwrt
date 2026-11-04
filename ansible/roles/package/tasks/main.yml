@@ -65,8 +65,9 @@
   failed_when: package_removed.stdout | trim != ''
 
 - name: Install the package again
+  # The dependency is still installed, so opkg resolves it without the feed.
   community.openwrt.command:
-    cmd: "opkg install --force-depends /tmp/wg-portal.ipk"
+    cmd: "opkg install /tmp/{{ wgp.package }}"
   changed_when: false
   register: package_reinstall
 

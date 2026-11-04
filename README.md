@@ -282,9 +282,31 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags verify \
 
 The `net` tag writes `/etc/config/network` into the rootfs of the guest, on
 the controller — the router is not up yet. The `setup` tag installs the `.ipk`
-of the portal and the kernel modules with opkg, loads the WireGuard modules,
-writes `/etc/wg-portal/config.yaml` and starts the service. The `verify` tag
-waits for the traffic in the tunnel and pings the client back from the guest.
+of the portal with opkg, loads the WireGuard modules, writes
+`/etc/wg-portal/config.yaml` and starts the service. The `verify` tag waits
+for the traffic in the tunnel and pings the client back from the guest.
+
+### The dependency of the portal
+
+The portal depends on `kmod-wireguard`, and the check does not install that
+module by hand: opkg has to resolve the dependency itself, the way it does on
+the router. The modules come from a feed — the index of the OpenWrt
+repository with its signature, and the packages themselves — which the host
+serves over HTTP to the guest (opkg knows no `file://` url):
+
+```text
+Installing wg-portal (2.3.1-1) to root...
+Installing kmod-crypto-lib-chacha20 (6.6.144-r1) to root...
+Downloading http://10.77.0.1:18080/kmod-crypto-lib-chacha20_6.6.144-r1_aarch64_generic.ipk
+...
+Installing kmod-wireguard (6.6.144-r1) to root...
+Downloading http://10.77.0.1:18080/kmod-wireguard_6.6.144-r1_aarch64_generic.ipk
+```
+
+The index is signed by the build of the firmware, and the guest checks the
+signature against the keys it has (`/etc/opkg/keys`) — the check of the
+signature passes. The feeds of the firmware are dropped: the guest has no
+internet, the feed of the check is the only one it can reach.
 
 The files the play writes are rendered from `templates/openwrt/` — the
 configuration of the portal is `templates/openwrt/config.yaml.j2`, and the

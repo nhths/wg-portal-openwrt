@@ -1,6 +1,6 @@
 ---
-# The OpenWrt setup of the emulated router: the packages of the portal, the
-# WireGuard kernel modules, the configuration of the portal and the service.
+# The OpenWrt setup of the emulated router: the feed of the WireGuard kernel
+# modules, the portal itself, the configuration of the portal and the service.
 - name: Wait for the guest
   community.openwrt.command:
     cmd: "uname -a"
@@ -20,26 +20,67 @@
     state: present
   loop: "{{ wgp.architectures }}"
 
-- name: Copy the packages to the guest
+- name: Copy the portal to the guest
   community.openwrt.copy:
-    src: "{{ wgp.package_dir }}/{{ item }}"
-    dest: "/tmp/{{ item }}"
+    src: "{{ wgp.package_dir }}/{{ wgp.package }}"
+    dest: "/tmp/{{ wgp.package }}"
     mode: "0644"
-  loop: "{{ wgp.packages }}"
 
-- name: Install the portal and the kernel modules
-  # The packages are local files, so they are installed by their path. They are
-  # installed in the order of their dependencies: opkg resolves a dependency
-  # against the installed packages.
+- name: Point opkg at the feed of the check
+  # The kernel modules come from here: opkg resolves the dependency of the
+  # portal on kmod-wireguard against the index of the feed.
+  community.openwrt.copy:
+    content: "src wgp {{ wgp.feed_url }}\n"
+    dest: /etc/opkg/customfeeds.conf
+    mode: "0644"
+
+- name: Drop the feeds of the firmware
+  # The guest has no internet: the only feed it can reach is the one of the
+  # check.
+  community.openwrt.copy:
+    content: "# no internet in the guest: the only feed is the one of the check\n"
+    dest: /etc/opkg/distfeeds.conf
+    mode: "0644"
+
+- name: Update the lists of opkg
   community.openwrt.command:
-    cmd: "opkg install /tmp/{{ item }}"
-  loop: "{{ wgp.packages }}"
+    cmd: "opkg update"
+  register: opwrt_update
+  changed_when: false
+  until: opwrt_update.rc == 0
+  retries: 15
+  delay: 2
+
+- name: Report the update of the lists
+  ansible.builtin.debug:
+    msg: "{{ opwrt_update.stdout }}"
+
+- name: Install the portal
+  # The portal is a local file, so it is installed by its path. Its
+  # dependency, the WireGuard kernel module, opkg resolves on its own: it
+  # takes it from the feed, with the modules it needs.
+  community.openwrt.command:
+    cmd: "opkg install /tmp/{{ wgp.package }}"
   register: opwrt_install
   changed_when: false
 
 - name: Report the installation
   ansible.builtin.debug:
-    msg: "{{ opwrt_install.results | map(attribute='stdout') | join(' / ') }}"
+    msg: "{{ opwrt_install.stdout }}"
+
+- name: Check that the dependency was installed with the portal
+  ansible.builtin.assert:
+    that:
+      - "'Installing kmod-wireguard' in opwrt_install.stdout"
+    fail_msg: "opkg did not install kmod-wireguard as a dependency of the portal"
+    quiet: true
+
+- name: Check that the kernel module is installed
+  community.openwrt.command:
+    cmd: "opkg status kmod-wireguard"
+  register: opwrt_kmod
+  changed_when: false
+  failed_when: "'Status: install ok installed' not in opwrt_kmod.stdout"
 
 - name: Check that the portal is installed
   community.openwrt.command:

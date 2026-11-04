@@ -26,21 +26,16 @@ wgp_defaults:
   # is built.
   rootfs: /tmp/wgp-vm/rootfs
 
-  # The packages of the guest, in the order they are installed in. The order
-  # is the order of the dependencies: opkg resolves a dependency against the
-  # installed packages, so the kernel modules come first and the portal, which
-  # depends on the WireGuard one, comes last. The files are copied to the
-  # guest under these names.
-  packages:
-    - kmod-crypto-kpp.ipk
-    - kmod-crypto-lib-chacha20.ipk
-    - kmod-crypto-lib-poly1305.ipk
-    - kmod-crypto-lib-curve25519.ipk
-    - kmod-crypto-lib-chacha20poly1305.ipk
-    - kmod-udptunnel4.ipk
-    - kmod-udptunnel6.ipk
-    - kmod-wireguard.ipk
-    - wg-portal.ipk
+  # The package that is copied to the guest: the portal. The kernel modules
+  # come from the feed below — opkg pulls them in as the dependencies of the
+  # portal, the way it does on the router.
+  package: wg-portal.ipk
+
+  # The feed with the kernel modules. The url is the directory of the feed:
+  # opkg takes the index and the packages of it from there. The index is the
+  # one of the repository, with its signature — opkg checks the signature
+  # against the keys of the firmware.
+  feed_url: http://10.77.0.1:18080
 
   # The kernel modules the WireGuard one needs.
   modules:

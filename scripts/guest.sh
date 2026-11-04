@@ -5,7 +5,7 @@
 #
 #   fetch      download the rootfs, the kernel and the kernel modules
 #   bootstrap  the key Ansible logs in with
-#   packages   collect the .ipk of the portal and the kernel modules
+#   packages   collect the .ipk of the portal and the feed of the modules
 #   flash      build the 128 MB flash of the router
 #   boot       create the tap, start QEMU and wait for the guest
 #
@@ -13,7 +13,7 @@
 #
 #   guest.sh fetch      <dir>
 #   guest.sh bootstrap  <rootfs-dir> <key-file>
-#   guest.sh packages   <dist-dir> <target-dir> <kernel-modules-dir>
+#   guest.sh packages   <dist-dir> <target-dir> <kernel-modules-dir> <feed-dir>
 #   guest.sh flash      <rootfs-dir> <image> [size-mb]
 #   guest.sh boot       <flash-image> <kernel> <tap> <console> <pidfile>
 set -euo pipefail
@@ -77,6 +77,9 @@ fetch() {
   [ -n "$kdir" ] || { echo "no kernel module directory for $modver" >&2; exit 1; }
   index=$OW_TARGET/kmods/$kdir/Packages
   [ -f pkgs/Packages ] || curl -fsSL -o pkgs/Packages "$index"
+  # The signature of the index: opkg checks it against the keys of the
+  # firmware, so the feed has to carry it.
+  [ -f pkgs/Packages.sig ] || curl -fsSL -o pkgs/Packages.sig "$index.sig"
   for pkg in "${KMOD_PACKAGES[@]}"; do
     file=$(awk -v p="$pkg" '$1 == "Package:" && $2 == p {hit = 1} hit && $1 == "Filename:" {print $2; exit}' pkgs/Packages)
     [ -n "$file" ] || { echo "package $pkg not found in $index" >&2; exit 1; }
@@ -107,10 +110,20 @@ bootstrap() {
 
 # --- the packages of the guest ---------------------------------------------------
 
+# The feed of the kernel modules: the packages and the index that describes
+# them. The portal depends on kmod-wireguard, and opkg has to resolve that
+# dependency on its own — the way it does on the router, where the modules
+# come from the feed of the firmware.
+#
+# opkg knows no file:// url, so the feed is served over HTTP by the host: the
+# guest fetches the index and the packages from it. The index is the one of
+# the repository, with its signature: opkg checks the signature against the
+# keys of the firmware, and the index of a feed that opkg cannot verify is no
+# index at all.
 packages() {
-  local dist=$1 target=$2 kmods=$3
+  local dist=$1 target=$2 kmods=$3 feed=$4
 
-  mkdir -p "$target"
+  mkdir -p "$target" "$feed"
 
   local ipk pkg file
   ipk=$(ls "$dist"/wg-portal_*.ipk 2>/dev/null | head -1)
@@ -120,10 +133,13 @@ packages() {
   for pkg in "${KMOD_PACKAGES[@]}"; do
     file=$(ls "$kmods/$pkg"_*.ipk 2>/dev/null | head -1)
     [ -n "$file" ] || { echo "the package $pkg is missing in $kmods" >&2; exit 1; }
-    cp "$file" "$target/$pkg.ipk"
+    cp "$file" "$feed/"
   done
 
-  ls -l "$target"
+  cp "$kmods/Packages" "$feed/Packages"
+  cp "$kmods/Packages.sig" "$feed/Packages.sig"
+
+  ls -l "$target" "$feed"
 }
 
 # --- the flash of the router ------------------------------------------------------
@@ -189,7 +205,7 @@ boot() {
 case "${1:-}" in
   fetch) fetch "${2:?the target directory}" ;;
   bootstrap) bootstrap "${2:?the rootfs directory}" "${3:?the key file}" ;;
-  packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the target directory}" "${4:?the directory with the kernel module packages}" ;;
+  packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the target directory}" "${4:?the directory with the kernel module packages}" "${5:?the directory of the feed}" ;;
   flash) flash "${2:?the rootfs directory}" "${3:?the image to create}" "${4:-128}" ;;
   boot) boot "${2:?the flash image}" "${3:?the kernel}" "${4:?the tap device}" "${5:?the console file}" "${6:?the pid file}" ;;
   *)
