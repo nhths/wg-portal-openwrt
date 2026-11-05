@@ -94,6 +94,9 @@ The structure of the package is verified: an outer archive of
 `Architecture: aarch64_cortex-a53` and `Depends: kmod-wireguard`; `data`
 carries `usr/bin/wg-portal` (755) and `etc/init.d/wg-portal` (755).
 
+The package is 9.9 MB — that is what it takes of the 128 MB of the flash of
+the router.
+
 `Installed-Size` in `control` is counted in bytes (`du -sb`) — the same as in
 the stock OpenWrt packages: opkg converts the value to KiB itself
 (`pkg_size_kbs = (installed_size + 1023) / 1024`), so the Debian habit of
@@ -123,6 +126,11 @@ Measured on v2.3.1 / linux-arm64 with UPX 4.2.4:
 
 LZMA beats NRV2E by almost 3 MB, and `--best` on top of LZMA saves another
 70 kB. The two other modes are not kept: they only waste space.
+
+The packing is the right trade for the router, because of its resources:
+**128 MB of flash and 512 MB of RAM**. The flash is the scarce one — the
+unpacked binary would take 39.4 MB of it — and the RAM is not: the packed
+binary needs ~48 MB of it instead of ~31 MB, and the router has 512 MB.
 
 ## The measurements
 
@@ -159,13 +167,16 @@ HTTP on `127.0.0.1:8888`.
   hardware, but the same order of magnitude. For a web UI that is started
   once a day it does not matter.
 - **RAM**: the unpacked image ends up in anonymous memory, so RSS grows from
-  30.7 MB to ~48 MB, i.e. **+55 %**. On a router with 128 MB of RAM that is
-  the difference between "fits" and "does not fit". If memory matters more
-  than flash, take the unpacked binary — every packed mode needs about the
-  same amount of RAM.
+  30.7 MB to ~48 MB, i.e. **+55 %**.
 
-For the router: `--best --lzma` is the best by size. `--best` costs 3.6 MB
-more flash and starts ~2.4 s faster, but needs the same RAM.
+The router has **128 MB of flash and 512 MB of RAM**: the flash is the scarce
+resource and the RAM is not. So the packed binary is the right one — it
+gives back 29.5 MB of the flash for 17 MB of the RAM, and the router has
+more than ten times the RAM the packed binary needs. Every packed mode needs
+about the same amount of RAM, so the mode is chosen by the size alone:
+`--best --lzma`. `--best` costs 3.6 MB more flash and starts ~2.4 s faster,
+but needs the same RAM — take it only when the flash is tight or the startup
+matters.
 
 The absolute numbers are only meaningful within one round: the emulation is
 CPU-bound and the first binary started in a guest pays the warm-up of the
@@ -207,7 +218,9 @@ and ~9 MB after.
 ## The emulated router
 
 Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on
-a 128 MB ext4 flash with 512 MB of RAM — the resources of the real router.
+a 128 MB ext4 flash with 512 MB of RAM — exactly the resources of the real
+router (RouteRich AX3000 v1: 128 MB of flash, 512 MB of RAM). The measured
+memory of the packed binary is therefore the memory it takes on the router.
 The flash is built with `mke2fs -d` (`scripts/guest.sh flash`), attached as a
 virtio disk, and the guest boots from it directly with the kernel of the
 release.
@@ -536,8 +549,6 @@ router itself. What is known about the difference:
   would be gone after a reboot.
 - The firewall zone for `wg0` exists only as a step of Ansible in the role
   `tunnel`; on the router the zone has to be added by hand.
-- The flash and the RAM of the AX3000 v1 are unverified: the guest is
-  modelled with 128 MB of flash and 512 MB of RAM.
 
 ## The caveats
 
