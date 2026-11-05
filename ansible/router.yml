@@ -8,7 +8,7 @@
 # that one is used as it is.
 #
 #   ansible-playbook ansible/router.yml
-#   ansible-playbook ansible/router.yml -e router_address=192.168.31.1
+#   ansible-playbook ansible/router.yml -e router_address=192.168.0.1
 #
 # Only the modules of Ansible itself are used. The modules of the
 # community.openwrt collection would need a collection that is not in Ansible,
@@ -26,9 +26,9 @@
   gather_facts: false
   vars:
     # The address of the LAN router. The inventory of the serverside repo
-    # owns the value — this is the default, so that the play works on its
-    # own, and it is overridden with -e router_address=...
-    router_address: 192.168.31.1
+    # owns the value, but the play has to work without any inventory — this
+    # is the default, and it is overridden with -e router_address=...
+    router_address: 192.168.0.1
     router_user: root
     # The private key of the router. Empty means the default one of the
     # machine the play runs on.
