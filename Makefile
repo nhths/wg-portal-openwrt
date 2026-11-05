@@ -16,7 +16,13 @@ QEMU ?= qemu-system-aarch64
 DIST ?= $(CURDIR)/dist
 IMAGE ?= wg-portal-check
 PKG_IMAGE ?= wg-portal-pkg
+USIGN_IMAGE ?= wg-portal-usign
 TAG ?= $(VER)
+
+# The key of the feed: the public one is in the repository, the secret one is
+# in the secrets of the CI and, for the local runs, in the file below.
+PUBLIC_KEY ?= $(CURDIR)/keys/wg-portal.pub
+SECRET_KEY ?= $(HOME)/.config/wg-portal/secret.key
 
 LINT_IMAGE ?= cr.knois.ru/pipelines/lint:latest
 PODMAN ?= podman
@@ -29,7 +35,7 @@ else
   RUN_LINT = $(PODMAN) run --rm -v "$$(pwd):/src:z" -w /src $(LINT_IMAGE) $(1)
 endif
 
-.PHONY: help dist bench check-install check-wireguard image build-src lint clean
+.PHONY: help dist feed feed-index feed-sign bench check-install check-wireguard image usign-image build-src lint clean
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -42,13 +48,28 @@ dist: ## Pack the release binary with UPX and build the .ipk package
 	  -e "VER=$(VER)" -e "ARCH=$(ARCH)" -e "REL=$(REL)" \
 	  -v "$(DIST):/w" $(PKG_IMAGE):$(TAG)
 
+usign-image: ## Build the image with the usign of OpenWrt
+	$(DOCKER) build --platform $(PLATFORM) -f Dockerfile.usign -t $(USIGN_IMAGE) .
+
+feed: dist ## Build the index of the feed of the portal and sign it
+	$(MAKE) feed-index
+	$(MAKE) feed-sign
+
+feed-index: ## Build the index of the feed of the portal
+	./scripts/make-feed.sh $(DIST) $(PUBLIC_KEY)
+
+feed-sign: usign-image ## Sign the index of the feed of the portal
+	$(DOCKER) run --rm --platform $(PLATFORM) \
+	  -v "$(DIST):/w" -v "$(SECRET_KEY):/key/secret.key:ro" \
+	  $(USIGN_IMAGE) -S -m /w/Packages -s /key/secret.key -x /w/Packages.sig
+
 bench: ## Measure size, startup time and RAM usage in an emulated arm64 guest
 	./scripts/bench.sh
 
 check-install: ## Install the .ipk into an emulated OpenWrt guest and start it
 	./scripts/check.sh install
 
-image: dist ## Build the image of the WireGuard check
+image: dist usign-image ## Build the image of the WireGuard check
 	$(DOCKER) build --platform $(PLATFORM) -t $(IMAGE):$(TAG) -f Dockerfile .
 
 check-wireguard: image ## Check a real WireGuard tunnel in the image of the check

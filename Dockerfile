@@ -6,6 +6,11 @@
 #
 # The check needs the tun device (the tap between the host and the guest) and
 # the right to create the network interfaces in the namespace of the container.
+
+# The usign of OpenWrt: the tool that signs the feeds of opkg. It is a build
+# of OpenWrt for musl, so it comes with its own loader and libraries.
+FROM wg-portal-usign AS usign
+
 FROM debian:bookworm-slim
 
 RUN apt-get update \
@@ -40,6 +45,15 @@ ENV PATH=/opt/venv/bin:$PATH
 ENV ANSIBLE_CONFIG=/opt/wg-portal/ansible/ansible.cfg
 ENV ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
 ENV ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote
+
+# The usign of OpenWrt, with its loader and its libraries: the check signs
+# the index of the feed of the portal with a throwaway key.
+COPY --from=usign /lib/ld-musl-x86_64.so.1 /lib/ld-musl-x86_64.so.1
+COPY --from=usign /opt/usign /opt/usign
+COPY --from=usign /usr/lib/libubox.so. /opt/usign/lib/
+COPY --from=usign /usr/lib/libgcc_s.so.1 /opt/usign/lib/libgcc_s.so.1
+RUN printf '#!/bin/sh\nexec /lib/ld-musl-x86_64.so.1 --library-path /opt/usign/lib /opt/usign/usign "$@"\n' > /usr/local/bin/usign \
+ && chmod 755 /usr/local/bin/usign
 
 COPY ansible/ /opt/wg-portal/ansible/
 COPY scripts/ /opt/wg-portal/scripts/

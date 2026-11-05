@@ -121,14 +121,16 @@ bootstrap() {
 # keys of the firmware, and the index of a feed that opkg cannot verify is no
 # index at all.
 packages() {
-  local dist=$1 target=$2 kmods=$3 feed=$4
+  local dist=$1 kmods=$2 feed=$3 wgpfeed=$4
 
-  mkdir -p "$target" "$feed"
+  mkdir -p "$feed" "$wgpfeed"
 
   local ipk pkg file
   ipk=$(ls "$dist"/wg-portal_*.ipk 2>/dev/null | head -1)
   [ -n "$ipk" ] || { echo "no .ipk in $dist — run 'make dist' first" >&2; exit 1; }
-  cp "$ipk" "$target/wg-portal.ipk"
+  # The package of the feed of the portal: the name of it is the one of the
+  # index, opkg fetches it by that name.
+  cp "$ipk" "$wgpfeed/"
 
   for pkg in "${KMOD_PACKAGES[@]}"; do
     file=$(ls "$kmods/$pkg"_*.ipk 2>/dev/null | head -1)
@@ -139,7 +141,7 @@ packages() {
   cp "$kmods/Packages" "$feed/Packages"
   cp "$kmods/Packages.sig" "$feed/Packages.sig"
 
-  ls -l "$target" "$feed"
+  ls -l "$feed" "$wgpfeed"
 }
 
 # --- the flash of the router ------------------------------------------------------
@@ -205,7 +207,7 @@ boot() {
 case "${1:-}" in
   fetch) fetch "${2:?the target directory}" ;;
   bootstrap) bootstrap "${2:?the rootfs directory}" "${3:?the key file}" ;;
-  packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the target directory}" "${4:?the directory with the kernel module packages}" "${5:?the directory of the feed}" ;;
+  packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the directory with the kernel module packages}" "${4:?the directory of the feed of the modules}" "${5:?the directory of the feed of the portal}" ;;
   flash) flash "${2:?the rootfs directory}" "${3:?the image to create}" "${4:-128}" ;;
   boot) boot "${2:?the flash image}" "${3:?the kernel}" "${4:?the tap device}" "${5:?the console file}" "${6:?the pid file}" ;;
   *)
