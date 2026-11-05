@@ -1,6 +1,7 @@
 # AGENTS.md
 
-The working notes of the project: how the package is built, how the check
+The working notes of the project: how the package of
+[WG Portal](https://github.com/h44z/wg-portal) is built, how the check
 works, and what is known about the router it is built for.
 
 The README is the short version — what the thing is, how to install it, how
