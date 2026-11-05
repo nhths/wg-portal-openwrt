@@ -21,15 +21,50 @@ The upstream project: <https://github.com/h44z/wg-portal>
 
 ## Install
 
+### Through the feed
+
+Every release carries a feed of its own: the index of the packages
+(`Packages`), the signature of the index (`Packages.sig`) and the public key
+of it (`wg-portal.pub`). The index is signed with `usign` — the tool OpenWrt
+signs its own feeds with — and opkg checks the signature against the keys
+the router trusts.
+
+On the router:
+
+```sh
+wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub
+usign -F -p /tmp/wg-portal.pub
+opkg-key add /tmp/wg-portal.pub
+echo 'src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf
+opkg update
+opkg install wg-portal
+```
+
+The url of the feed is a directory: opkg takes `Packages` and `Packages.sig`
+from it by itself, and the package of the index from the same directory.
+
+`usign -F -p` prints the fingerprint of the key — it has to be
+`4aae624e9d888fea`. The public half of the key is in the repository
+([keys/wg-portal.pub](keys/wg-portal.pub)), so the fingerprint can be
+compared with it before the key is trusted.
+
+The dependency of the package — the WireGuard kernel module — opkg pulls in
+itself from the feeds of the firmware, so the router needs the internet.
+
+### Through the url of the package
+
+If the feed is not wanted, the package can be installed by its url:
+
 ```sh
 opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk
 ```
 
-The name of the asset is the same in every release, so the command does not
-change; opkg upgrades to a newer version with the same command.
+The name of the asset is the same in every release, so the command always
+gives the current version — running it again updates the package. But opkg
+does not know where the package came from, so it cannot update it by
+itself: that is what the feed is for.
 
-The dependency of the package — the WireGuard kernel module — opkg pulls in
-itself from the feeds of the firmware, so the router needs the internet.
+### Configuration
 
 The package carries no configuration, so the portal needs one before the
 first start:
@@ -69,6 +104,22 @@ And then the service:
 
 The web UI is on the port of the config.
 
+## Update
+
+With the feed in place, opkg sees the new versions:
+
+```sh
+opkg update
+opkg upgrade wg-portal
+```
+
+The router can do it on its own — once a night, for example:
+
+```sh
+echo '0 4 * * * opkg update && opkg upgrade wg-portal >/dev/null 2>&1' >> /etc/crontabs/root
+/etc/init.d/cron restart
+```
+
 ## Build
 
 Docker with network access is required. The measurements and the checks
@@ -77,6 +128,7 @@ creates a tap device) and `ethtool`.
 
 ```sh
 make dist           # download, pack with UPX, build the .ipk
+make feed           # build the index of the feed and sign it
 make check-install  # install the .ipk in an emulated OpenWrt and start it
 make image          # build the image of the WireGuard check
 make check-wireguard # check a real WireGuard tunnel in that image
@@ -84,6 +136,11 @@ make check-wireguard # check a real WireGuard tunnel in that image
 
 `ARCH` is the exact value of `opkg print-architecture` on the router
 (`aarch64_cortex-a53`); opkg refuses the package otherwise.
+
+`make feed` signs the index with the secret key of the project. The secret
+key is not in the repository: it lives in `~/.config/wg-portal/secret.key`
+for the local runs and in the secrets of the CI for the releases. The public
+key is in the repository.
 
 The details — the layout of the project, the emulation, the checks, the
 release workflow and the notes of the measurements — are in

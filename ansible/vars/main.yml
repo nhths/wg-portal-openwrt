@@ -26,16 +26,20 @@ wgp_defaults:
   # is built.
   rootfs: /tmp/wgp-vm/rootfs
 
-  # The package that is copied to the guest: the portal. The kernel modules
-  # come from the feed below — opkg pulls them in as the dependencies of the
-  # portal, the way it does on the router.
-  package: wg-portal.ipk
-
   # The feed with the kernel modules. The url is the directory of the feed:
   # opkg takes the index and the packages of it from there. The index is the
   # one of the repository, with its signature — opkg checks the signature
   # against the keys of the firmware.
   feed_url: http://10.77.0.1:18080
+
+  # The feed of the portal: the index of it, the signature of the index and
+  # the package. The url is a directory as well.
+  wgp_feed_url: http://10.77.0.1:18081
+
+  # The public key of the feed of the portal. opkg checks the signature of
+  # the index against the keys it trusts, so the key goes into /etc/opkg/keys
+  # of the guest.
+  feed_pubkey: /tmp/wgp-vm/wgp-feed/wg-portal.pub
 
   # The kernel modules the WireGuard one needs.
   modules:

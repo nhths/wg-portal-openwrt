@@ -21,6 +21,9 @@ to build it. This file is everything else.
 - `ARCH` is the exact value of `opkg print-architecture` on the router
   (`aarch64_cortex-a53`); opkg refuses the package otherwise.
 - The build artifacts are not tracked — see `.gitignore`.
+- The secret key of the feed of the portal is never in the repository: only
+  the public half is (`keys/wg-portal.pub`). The secret half is in the
+  secrets of the CI and in `~/.config/wg-portal/secret.key` locally.
 
 ## The layout
 
@@ -31,9 +34,13 @@ Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
 Dockerfile.builder           the image that builds wg-portal from source
 Dockerfile.pkg               the toolbox of the package: UPX, tar, Jinja2
+Dockerfile.usign             the image with the usign of OpenWrt: it signs the
+                             feed of the portal
 .github/workflows/
   wg-portal-release.yml      the workflow of the release: the portal is checked
                              for updates every two weeks
+keys/
+  wg-portal.pub              the public key of the feed of the portal
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
   inventory.ini              the emulated router is registered by the play
@@ -52,6 +59,7 @@ scripts/
   build-src.sh               build wg-portal from source and compare sizes
   check.sh                   the checks: the package, the WireGuard tunnel
   guest.sh                   the emulated router: fetch, boot, flash
+  make-feed.sh               the index of the feed of the portal
   bench.sh                   measure in an emulated arm64 guest
   bench-init.sh              the init of the measurement guest
   bench-one.sh               measure one binary: the startup time and the RSS
@@ -63,6 +71,7 @@ wg-portal-upx-ipk-bench.md   the original task brief
 
 ```sh
 make dist           # download, pack with UPX, build the .ipk
+make feed           # the index of the feed of the portal and the signature of it
 make bench          # measure size, startup time and RAM in an emulated guest
 make check-install  # install the .ipk in a guest OpenWrt and start it
 make image          # build the image of the WireGuard check
@@ -77,7 +86,9 @@ device) and `ethtool`.
 
 The variables of the Makefile: `VER` (the version of the portal, `v2.3.1`),
 `ARCH` (`aarch64_cortex-a53`), `REL` (the revision of the package, `1`),
-`IMAGE`, `PKG_IMAGE`, `TAG`, `DOCKER` (`docker` or `podman`).
+`IMAGE`, `PKG_IMAGE`, `USIGN_IMAGE`, `TAG`, `DOCKER` (`docker` or `podman`),
+`PUBLIC_KEY` (the public key of the feed) and `SECRET_KEY` (the secret half
+of it).
 
 ## The build of the package
 
@@ -101,6 +112,12 @@ the router.
 the stock OpenWrt packages: opkg converts the value to KiB itself
 (`pkg_size_kbs = (installed_size + 1023) / 1024`), so the Debian habit of
 "kilobytes" does not apply here.
+
+The container of the toolbox writes into `dist/` as the user of the host, so
+the id of the host has to be kept inside it. Rootless podman maps the ids
+of the users its own way and needs `--userns=keep-id` for that; the root of
+the host is mapped to itself anyway, and the runner of the CI builds with
+podman as root. The Makefile adds the flag when it is needed and only then.
 
 The configuration of the portal is not in the package: the init script points
 the binary at `/etc/wg-portal/config.yaml`, and the file has to be written on
@@ -329,6 +346,86 @@ The feed of the check serves the whole chain of the dependencies of
   OpenWrt repository (`464xlat_13_aarch64_generic.ipk`) fails the same way.
   The install check runs in a guest with a real OpenWrt root instead.
 
+## The feed of the portal
+
+A package installed by its url is in no feed, so opkg cannot update it: it
+knows the version that is installed and nothing else. The feed is what makes
+the update possible — it is the index of the packages, the signature of the
+index and the packages themselves.
+
+The index (`Packages`) is a list of stanzas, one per package:
+
+```text
+Package: wg-portal
+Version: 2.3.1-1
+Depends: kmod-wireguard
+Section: net
+Architecture: aarch64_cortex-a53
+...
+Filename: wg-portal_2.3.1-1_aarch64_cortex-a53.ipk
+Size: 10403328
+SHA256sum: ...
+```
+
+The control part of it is the control file of the package itself, so the
+index cannot disagree with the package; `scripts/make-feed.sh` adds the three
+fields that opkg needs and opkg does not take from the package.
+
+### The signature
+
+The signature is made with **usign**, not with GPG: OpenWrt 24.10 signs its
+feeds with usign, and its opkg checks `Packages.sig` against the keys in
+`/etc/opkg/keys` — a feed whose signature does not match is dropped. The
+public key of the project is in the repository ([keys/wg-portal.pub](keys/wg-portal.pub)),
+its fingerprint is `4aae624e9d888fea`. The secret half is not in the
+repository: it is in the secrets of the CI (`OPKG_SECRET_KEY`) and, for the
+local runs, in `~/.config/wg-portal/secret.key`.
+
+```sh
+make feed                       # the index and the signature of it
+make feed SECRET_KEY=/somewhere/secret.key
+```
+
+The signing is done by the usign of OpenWrt — the packaged binary for
+x86_64 (`Dockerfile.usign`), a build for musl, so it needs the loader and the
+libraries of Alpine. The image of the check copies them into Debian together
+with a wrapper (`/usr/local/bin/usign`).
+
+The check of the signature is `usign -V -p <public key> -x <signature>
+-m <index>`: it prints `OK` when the index is signed with the key.
+
+### The feed of the check
+
+The check does not use the key of the project: it generates a throwaway key
+pair of its own (`usign -G -p ... -s ...`) and signs its feed with it. The
+guest is given the public half of that key (`opkg-key add`), so the whole
+chain is proved without a secret anywhere:
+
+```text
+Downloading http://10.77.0.1:18081/Packages
+Downloading http://10.77.0.1:18081/Packages.sig
+Signature check passed.
+Installing wg-portal (2.3.1-1) to root...
+```
+
+The check serves the feed on the second port (18081), next to the port of
+the feed of the firmware (18080): the guest has two feeds, the packages of
+the portal come from one, the kernel modules from the other.
+
+### The feed of the release
+
+Every release publishes three more assets next to the package: `Packages`,
+`Packages.sig` and `wg-portal.pub`. The url of the feed is the directory of
+the download of the last release:
+
+```text
+src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
+```
+
+The `Filename:` of the index carries the version, so the index is built
+again for every release; the assets of the older releases stay where they
+are, but `latest` points at the newest one.
+
 ## The checks
 
 `scripts/check.sh` boots the emulated router and has two modes:
@@ -374,21 +471,34 @@ with the portal inside and the WireGuard client next to it, in one container.
 
 ```sh
 docker build -t wg-portal-check .
-docker run --rm --device /dev/net/tun --cap-add NET_ADMIN wg-portal-check
+docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
+  wg-portal-check
 ```
 
 The container needs the tun device (`--device /dev/net/tun`) and the right to
 create the network interfaces in its namespace (`--cap-add NET_ADMIN`): the
 tap between the host and the guest and the WireGuard interface of the client
-are both created there. The image brings QEMU, the WireGuard tools, the guest
-(the rootfs, the kernel and the kernel modules) and Ansible with the
-collection — the check itself needs no network.
+are both created there. It needs the raw socket as well (`--cap-add
+NET_RAW`): the ping of the client through the tunnel is an `iputils-ping`,
+which opens a raw socket — docker gives the capability by default, podman
+does not, and without it the ping fails with "ping: Operation not permitted"
+on the standard error, where the log of the check does not show it. The image
+brings QEMU, the WireGuard tools, the guest (the rootfs, the kernel and the
+kernel modules) and Ansible with the collection — the check itself needs no
+network.
 
 The tun device is a device of the machine the container runs on: the `tun`
 module has to be loaded there (`modprobe tun`). The runner of the group does
 not have it yet, so the check job of the pipeline fails there with
 `stat /dev/net/tun: no such file or directory` — that is why the job is
 manual: the build job stays the blocking one.
+
+The image is built with podman on the runner and with docker on a developer
+machine, and podman does not expand the wildcards in the source of a `COPY`
+(`COPY --from=usign /usr/lib/libubox.so. …` fails there with "no such file
+or directory"). Everything the image of the check needs from the image of
+the usign is copied by its exact path — the libraries of the usign are put
+into `/opt/usign/lib` in the image of the usign itself.
 
 ### The network of the check
 
@@ -512,6 +622,17 @@ to release, so the url of it stays the same:
 ```sh
 opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk
 ```
+
+It carries the feed of the portal as well (see "The feed of the portal"):
+`Packages`, `Packages.sig` and `wg-portal.pub`.
+
+The workflow signs the index with the secret key from the secrets of the
+repository (`OPKG_SECRET_KEY`) and checks the signature against the public
+key of the repository afterwards — a secret that does not belong to that
+key fails the release. It builds the index with `make feed-index` and signs
+it with `make feed-sign`, not with `make feed`: the latter rebuilds the
+package, and the released `.ipk` would not be the one the check image has
+baked in.
 
 The workflow runs the code of the repository it is in, so the GitHub copy of
 the project is the one the Actions run in; the GitLab repository is the source

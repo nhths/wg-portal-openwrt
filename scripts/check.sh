@@ -52,15 +52,19 @@ LINK_HOST=${LINK_HOST:-10.77.0.1}
 LINK_GUEST=${LINK_GUEST:-10.77.0.2}
 
 GUEST_ROOT=$VM/rootfs
-PACKAGES=$VM/packages
 FEED=$VM/feed
+WGP_FEED=$VM/wgp-feed
 KEY=$VM/id_ed25519
 CONSOLE=$VM/console-$MODE.log
 FLASH=$VM/flash.img
 PIDFILE=$VM/qemu.pid
-# The port the feed of the kernel modules is served on: the guest fetches the
-# index and the packages of it from the host.
+# The ports the feeds are served on: the guest fetches the index and the
+# packages of them from the host.
 FEED_PORT=${FEED_PORT:-18080}
+WGP_FEED_PORT=${WGP_FEED_PORT:-18081}
+# The key the feed of the portal is signed with. It is a throwaway one: the
+# check needs a signed feed, not the key of the releases.
+WGP_KEY=$VM/wgp-key
 
 # The script needs root for the tap device, the WireGuard interface and the
 # flash image. Inside the image it already is.
@@ -74,6 +78,7 @@ export QEMU MEM_MB BOOT_TIMEOUT LINK_HOST LINK_GUEST
 cleanup() {
   [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true
   [ -f "$VM/feed.pid" ] && kill "$(cat "$VM/feed.pid")" 2>/dev/null || true
+  [ -f "$VM/wgp-feed.pid" ] && kill "$(cat "$VM/wgp-feed.pid")" 2>/dev/null || true
   $SUDO ip link del "$CLIENT_IF" 2>/dev/null || true
   $SUDO ip link del "$TAP" 2>/dev/null || true
 }
@@ -93,9 +98,10 @@ cat > "$VM/vars.json" <<EOF
     "wg_port": $WG_PORT,
     "admin_password": "$ADMIN_PASSWORD",
     "key_file": "$KEY",
-    "package_dir": "$PACKAGES",
     "rootfs": "$GUEST_ROOT",
-    "feed_url": "http://$LINK_HOST:$FEED_PORT"
+    "feed_url": "http://$LINK_HOST:$FEED_PORT",
+    "wgp_feed_url": "http://$LINK_HOST:$WGP_FEED_PORT",
+    "feed_pubkey": "$WGP_FEED/wg-portal.pub"
   }
 }
 EOF
@@ -113,7 +119,17 @@ echo "=== preparing the guest for Ansible"
 "$HERE/guest.sh" bootstrap "$GUEST_ROOT" "$KEY"
 
 echo "=== collecting the packages"
-"$HERE/guest.sh" packages "$DIST" "$PACKAGES" "$VM/pkgs" "$FEED"
+"$HERE/guest.sh" packages "$DIST" "$VM/pkgs" "$FEED" "$WGP_FEED"
+
+# The feed of the portal: the index of it and the signature of the index. The
+# key is a throwaway one — the check needs a signed feed, not the key of the
+# releases. usign is the tool of OpenWrt: the feeds of the firmware are
+# signed the same way.
+echo "=== signing the feed of the portal"
+rm -f "$WGP_KEY.pub" "$WGP_KEY.sec"
+usign -G -p "$WGP_KEY.pub" -s "$WGP_KEY.sec" -c "the throwaway key of the check"
+"$HERE/make-feed.sh" "$WGP_FEED" "$WGP_KEY.pub"
+usign -S -m "$WGP_FEED/Packages" -s "$WGP_KEY.sec" -x "$WGP_FEED/Packages.sig"
 
 echo "=== building the flash of the router"
 "$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
@@ -122,12 +138,19 @@ echo "=== building the flash of the router"
 
 "$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
 
-# The feed of the kernel modules: opkg knows no file:// url, so the guest
-# fetches the index and the packages of it over HTTP from the host.
+# The feeds: opkg knows no file:// url, so the guest fetches the index and
+# the packages of them over HTTP from the host. The feed of the kernel
+# modules is the one of OpenWrt, the feed of the portal is the one of this
+# project — its index is signed with the key of the check.
 echo "=== serving the feed of the kernel modules"
 python3 -m http.server "$FEED_PORT" --directory "$FEED" --bind "$LINK_HOST" \
   > "$VM/feed.log" 2>&1 &
 echo $! > "$VM/feed.pid"
+
+echo "=== serving the feed of the portal"
+python3 -m http.server "$WGP_FEED_PORT" --directory "$WGP_FEED" --bind "$LINK_HOST" \
+  > "$VM/wgp-feed.log" 2>&1 &
+echo $! > "$VM/wgp-feed.pid"
 
 # --- the setup of the guest, by Ansible -------------------------------------------
 

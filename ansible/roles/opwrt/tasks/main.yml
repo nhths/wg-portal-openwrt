@@ -20,17 +20,32 @@
     state: present
   loop: "{{ wgp.architectures }}"
 
-- name: Copy the portal to the guest
+- name: Copy the public key of the feed of the portal to the guest
+  # opkg checks the signature of the index of a feed against the keys it
+  # trusts, so the key of the feed goes into /etc/opkg/keys of the guest.
   community.openwrt.copy:
-    src: "{{ wgp.package_dir }}/{{ wgp.package }}"
-    dest: "/tmp/{{ wgp.package }}"
+    src: "{{ wgp.feed_pubkey }}"
+    dest: "/tmp/wg-portal.pub"
     mode: "0644"
 
-- name: Point opkg at the feed of the check
-  # The kernel modules come from here: opkg resolves the dependency of the
-  # portal on kmod-wireguard against the index of the feed.
+- name: Trust the public key of the feed of the portal
+  community.openwrt.command:
+    cmd: "opkg-key add /tmp/wg-portal.pub"
+  register: opwrt_key
+  changed_when: false
+
+- name: Report the key of the feed
+  ansible.builtin.debug:
+    msg: "{{ opwrt_key.stdout }}"
+
+- name: Point opkg at the feeds of the check
+  # The portal comes from the feed of this project, the kernel modules from
+  # the feed of OpenWrt: opkg resolves the dependency of the portal on
+  # kmod-wireguard against the index of that feed.
   community.openwrt.copy:
-    content: "src wgp {{ wgp.feed_url }}\n"
+    content: |
+      src wgp {{ wgp.wgp_feed_url }}
+      src openwrt {{ wgp.feed_url }}
     dest: /etc/opkg/customfeeds.conf
     mode: "0644"
 
@@ -56,11 +71,12 @@
     msg: "{{ opwrt_update.stdout }}"
 
 - name: Install the portal
-  # The portal is a local file, so it is installed by its path. Its
+  # The portal is in the feed of this project: opkg finds it by its name and
+  # checks the signature of the index of the feed against the key of it. Its
   # dependency, the WireGuard kernel module, opkg resolves on its own: it
-  # takes it from the feed, with the modules it needs.
+  # takes it from the feed of OpenWrt, with the modules it needs.
   community.openwrt.command:
-    cmd: "opkg install /tmp/{{ wgp.package }}"
+    cmd: "opkg install wg-portal"
   register: opwrt_install
   changed_when: false
 
