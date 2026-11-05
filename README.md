@@ -70,22 +70,27 @@ The play `ansible/router.yml` does the same on the LAN router: it fetches
 the public key of the feed, checks its fingerprint, trusts it, points opkg
 at the feed and installs the portal from it.
 
-It needs nothing but Ansible and the access to the router: the play is a
-single file with no dependencies of its own — the key it fetches itself,
-the address of the router is a variable of the play, and the inventory is
-not needed: the router is registered by the play itself. (If the inventory
-has a host named `router`, that one is used as it is.)
+It is a single file with no dependencies of its own — it needs nothing but
+Ansible and the access to the router. It can be taken from the mirror
+without the repository:
 
 ```sh
-ansible-playbook ansible/router.yml
+curl -sSLo router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
+ansible-playbook router.yml
 ```
 
+The play fetches the public key of the feed itself, the address of the
+router is a variable of it, and the inventory is not needed: the router is
+registered by the play. (If the inventory has a host named `router`, that
+one is used as it is — with the address of the inventory, and the variable
+does not change it.)
+
 The access is ssh as `root`, with the key of the machine the play runs on.
-The address of the router is the default of the play — the address of the
-LAN router. Another one, another key:
+The address of the router is the default of the play — `192.168.0.1`.
+Another address, another key:
 
 ```sh
-ansible-playbook ansible/router.yml -e router_address=192.168.31.1 -e router_ssh_key=~/.ssh/id_ed25519
+ansible-playbook router.yml -e router_address=192.168.0.2 -e router_ssh_key=~/.ssh/id_ed25519
 ```
 
 The play checks the fingerprint of the key before it trusts it: the key has
