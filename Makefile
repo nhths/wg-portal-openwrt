@@ -35,6 +35,17 @@ else
   RUN_LINT = $(PODMAN) run --rm -v "$$(pwd):/src:z" -w /src $(LINT_IMAGE) $(1)
 endif
 
+# Rootless podman maps the ids of the users its own way: the id of the host
+# has to be kept, or the container cannot write into the mounted directory.
+# The root of the host is mapped to itself anyway, and there the flag is not
+# needed — the runner of the CI builds with podman as root.
+# Docker has no such mapping, it takes the id of the user as it is.
+ifeq ($(DOCKER),podman)
+  RUN_ID = $(shell [ "$$(id -u)" = 0 ] || echo --userns=keep-id)
+else
+  RUN_ID =
+endif
+
 .PHONY: help dist feed feed-index feed-sign bench check-install check-wireguard image usign-image build-src lint clean
 
 help: ## Show the available targets
@@ -44,7 +55,7 @@ help: ## Show the available targets
 dist: ## Pack the release binary with UPX and build the .ipk package
 	mkdir -p $(DIST)
 	$(DOCKER) build --platform $(PLATFORM) -f Dockerfile.pkg -t $(PKG_IMAGE):$(TAG) .
-	$(DOCKER) run --rm --platform $(PLATFORM) --user "$$(id -u):$$(id -g)" \
+	$(DOCKER) run --rm --platform $(PLATFORM) $(RUN_ID) --user "$$(id -u):$$(id -g)" \
 	  -e "VER=$(VER)" -e "ARCH=$(ARCH)" -e "REL=$(REL)" \
 	  -v "$(DIST):/w" $(PKG_IMAGE):$(TAG)
 
@@ -59,7 +70,7 @@ feed-index: ## Build the index of the feed of the portal
 	./scripts/make-feed.sh $(DIST) $(PUBLIC_KEY)
 
 feed-sign: usign-image ## Sign the index of the feed of the portal
-	$(DOCKER) run --rm --platform $(PLATFORM) \
+	$(DOCKER) run --rm --platform $(PLATFORM) $(RUN_ID) \
 	  -v "$(DIST):/w" -v "$(SECRET_KEY):/key/secret.key:ro" \
 	  $(USIGN_IMAGE) -S -m /w/Packages -s /key/secret.key -x /w/Packages.sig
 

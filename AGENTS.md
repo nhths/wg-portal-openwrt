@@ -113,6 +113,12 @@ the stock OpenWrt packages: opkg converts the value to KiB itself
 (`pkg_size_kbs = (installed_size + 1023) / 1024`), so the Debian habit of
 "kilobytes" does not apply here.
 
+The container of the toolbox writes into `dist/` as the user of the host, so
+the id of the host has to be kept inside it. Rootless podman maps the ids
+of the users its own way and needs `--userns=keep-id` for that; the root of
+the host is mapped to itself anyway, and the runner of the CI builds with
+podman as root. The Makefile adds the flag when it is needed and only then.
+
 The configuration of the portal is not in the package: the init script points
 the binary at `/etc/wg-portal/config.yaml`, and the file has to be written on
 the router. The keys of it are the sections of the configuration of the
@@ -480,6 +486,13 @@ module has to be loaded there (`modprobe tun`). The runner of the group does
 not have it yet, so the check job of the pipeline fails there with
 `stat /dev/net/tun: no such file or directory` — that is why the job is
 manual: the build job stays the blocking one.
+
+The image is built with podman on the runner and with docker on a developer
+machine, and podman does not expand the wildcards in the source of a `COPY`
+(`COPY --from=usign /usr/lib/libubox.so. …` fails there with "no such file
+or directory"). Everything the image of the check needs from the image of
+the usign is copied by its exact path — the libraries of the usign are put
+into `/opt/usign/lib` in the image of the usign itself.
 
 ### The network of the check
 
