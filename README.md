@@ -1,13 +1,20 @@
 # wg-portal for OpenWrt
 
 A ready-to-install `.ipk` package of [WG Portal](https://github.com/h44z/wg-portal)
-for the router of the LAN: RouteRich AX3000 v1 (`mediatek/filogic`,
-`aarch64_cortex-a53`), kernel 6.6.144.
+for the router of the LAN:
 
-The release binary of the portal is packed with UPX (39.4 MB → 9.9 MB) and
-packed into an OpenWrt package. Every release is checked in an emulated
-OpenWrt before it is published: the package is installed there with opkg and
-a real WireGuard tunnel is made through it.
+- board: RouteRich AX3000 v1 (`mediatek/filogic`)
+- architecture: `aarch64_cortex-a53`
+- kernel: 6.6.144
+- **flash: 128 MB**
+- **RAM: 512 MB**
+
+The flash of the router is the scarce resource and the RAM is not, so the
+release binary of the portal is packed with UPX: 39.4 MB → 9.9 MB in the
+flash, at the price of ~48 MB of RAM instead of ~31 MB — the router has 512
+of them. The package is checked in an emulated OpenWrt with the very same
+resources (128 MB of flash, 512 MB of RAM) before every release: the package
+is installed there with opkg and a real WireGuard tunnel is made through it.
 
 Releases: <https://github.com/nhths/wg-portal-openwrt/releases>
 The upstream project: <https://github.com/h44z/wg-portal>
