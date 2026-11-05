@@ -1,8 +1,13 @@
 # wg-portal for OpenWrt
 
 A ready-to-install `.ipk` package of [WG Portal](https://github.com/h44z/wg-portal)
-for the router of the LAN: RouteRich AX3000 v1 (`mediatek/filogic`,
-`aarch64_cortex-a53`), kernel 6.6.144, **128 MB of flash and 512 MB of RAM**.
+for the router of the LAN:
+
+- board: RouteRich AX3000 v1 (`mediatek/filogic`)
+- architecture: `aarch64_cortex-a53`
+- kernel: 6.6.144
+- **flash: 128 MB**
+- **RAM: 512 MB**
 
 The flash of the router is the scarce resource and the RAM is not, so the
 release binary of the portal is packed with UPX: 39.4 MB → 9.9 MB in the
