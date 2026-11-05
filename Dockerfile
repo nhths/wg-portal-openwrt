@@ -47,11 +47,11 @@ ENV ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
 ENV ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote
 
 # The usign of OpenWrt, with its loader and its libraries: the check signs
-# the index of the feed of the portal with a throwaway key.
+# the index of the feed of the portal with a throwaway key. The libraries are
+# in the image of the usign itself (in /opt/usign/lib) — a wildcard in the
+# source of a COPY is a Docker thing, podman does not do it.
 COPY --from=usign /lib/ld-musl-x86_64.so.1 /lib/ld-musl-x86_64.so.1
 COPY --from=usign /opt/usign /opt/usign
-COPY --from=usign /usr/lib/libubox.so. /opt/usign/lib/
-COPY --from=usign /usr/lib/libgcc_s.so.1 /opt/usign/lib/libgcc_s.so.1
 RUN printf '#!/bin/sh\nexec /lib/ld-musl-x86_64.so.1 --library-path /opt/usign/lib /opt/usign/usign "$@"\n' > /usr/local/bin/usign \
  && chmod 755 /usr/local/bin/usign
 
