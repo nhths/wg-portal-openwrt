@@ -1,0 +1,123 @@
+---
+# The feed of the portal on the LAN router.
+#
+# The router is not in the inventory of this project: it is a machine of the
+# infrastructure, and the inventory that owns it is the one of the serverside
+# repo — the group [openwrt_hosts], the host router. Any inventory with that
+# host works:
+#
+#   ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+#
+# The play does what the README describes by hand: it trusts the key of the
+# feed, points opkg at the feed and installs the portal from it. The
+# configuration of the portal, the zone of the firewall and the service stay
+# as they are — they need the password of the portal, and the README has
+# them.
+#
+- name: Install the feed of the portal on the router
+  hosts: router
+  gather_facts: false
+  vars_files:
+    - vars/router.yml
+  vars:
+    # The router is an OpenWrt on dropbear: it has no sftp, so the files go
+    # over scp, and /tmp is the only roomy scratch space on it.
+    ansible_user: root
+    ansible_remote_tmp: /tmp
+    ansible_scp_if_ssh: smart
+    ansible_ssh_transfer_method: smart
+    ansible_ssh_use_tty: false
+    ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new
+  tasks:
+    - name: Copy the public key of the feed to the router
+      community.openwrt.copy:
+        src: "{{ playbook_dir }}/../keys/wg-portal.pub"
+        dest: "/tmp/wg-portal.pub"
+        mode: "0644"
+
+    - name: Read the fingerprint of the key
+      community.openwrt.command:
+        cmd: "usign -F -p /tmp/wg-portal.pub"
+      register: router_fingerprint
+      changed_when: false
+
+    - name: Report the fingerprint of the key
+      ansible.builtin.debug:
+        msg: "{{ router_fingerprint.stdout }}"
+
+    - name: Fail when the key is not the one of the project
+      # The key is trusted only when it is the one of the project: the
+      # fingerprint of it is in the README and in AGENTS.md.
+      ansible.builtin.assert:
+        that:
+          - feed_fingerprint in router_fingerprint.stdout
+        fail_msg: >-
+          the fingerprint of the key is not {{ feed_fingerprint }} —
+          the key is not the one of the project
+        quiet: true
+
+    - name: Trust the public key of the feed
+      # opkg-key puts the key into /etc/opkg/keys under its fingerprint, and
+      # opkg checks the signature of the index of the feed against the keys
+      # it trusts.
+      community.openwrt.command:
+        cmd: "opkg-key add /tmp/wg-portal.pub"
+      register: router_key
+      changed_when: false
+
+    - name: Report the key of the feed
+      ansible.builtin.debug:
+        msg: "{{ router_key.stdout }}"
+
+    - name: Point opkg at the feed of the portal
+      community.openwrt.lineinfile:
+        path: /etc/opkg/customfeeds.conf
+        line: "src wgp {{ feed_url }}"
+        state: present
+        create: true
+        mode: "0644"
+
+    - name: Update the lists of opkg
+      community.openwrt.command:
+        cmd: "opkg update"
+      register: router_update
+      changed_when: false
+      until: router_update.rc == 0
+      retries: 15
+      delay: 2
+
+    - name: Report the update of the lists
+      ansible.builtin.debug:
+        msg: "{{ router_update.stdout }}"
+
+    - name: Check whether the portal is installed
+      community.openwrt.command:
+        cmd: "opkg status wg-portal"
+      register: router_status
+      changed_when: false
+      failed_when: false
+
+    - name: Install the portal from the feed
+      # A package that is not on the router yet is installed, a package that
+      # is there is upgraded: opkg does not reinstall a package of the same
+      # version, and the feed is what brings the next one by itself.
+      community.openwrt.command:
+        cmd: >-
+          {{ 'opkg upgrade wg-portal' if 'Status:' in router_status.stdout
+          else 'opkg install wg-portal' }}
+      register: router_install
+      changed_when: false
+
+    - name: Report the installation
+      ansible.builtin.debug:
+        msg: "{{ router_install.stdout }}"
+
+    - name: Report the state of the portal and of its dependency
+      community.openwrt.command:
+        cmd: "opkg status wg-portal kmod-wireguard"
+      register: router_state
+      changed_when: false
+
+    - name: Report the state of the portal and of its dependency
+      ansible.builtin.debug:
+        msg: "{{ router_state.stdout }}"

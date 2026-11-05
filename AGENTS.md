@@ -16,7 +16,8 @@ to build it. This file is everything else.
   script that builds it.
 - The packaging is a script (`scripts/build-ipk.sh`), not a play.
 - The real router is never touched: no Ansible against it, no `opkg` on it.
-  Everything runs in the emulated guest.
+  Everything runs in the emulated guest. The play `ansible/router.yml` is
+  written for the user, who runs it — the agent only checks its syntax.
 - Everything in the repository is in English.
 - `ARCH` is the exact value of `opkg print-architecture` on the router
   (`aarch64_cortex-a53`); opkg refuses the package otherwise.
@@ -43,10 +44,12 @@ keys/
   wg-portal.pub              the public key of the feed of the portal
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
+  router.yml                 the feed of the portal on the real router
   inventory.ini              the emulated router is registered by the play
   ansible.cfg
   requirements.yml           the collections the play needs
   vars/main.yml              the defaults of the check
+  vars/router.yml            the url of the feed and the fingerprint of its key
   roles/opwrt/tasks/         the setup: the feed, the portal, the service
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
@@ -425,6 +428,28 @@ src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
 The `Filename:` of the index carries the version, so the index is built
 again for every release; the assets of the older releases stay where they
 are, but `latest` points at the newest one.
+
+### The play for the router
+
+`ansible/router.yml` installs the feed on the real router: it copies the
+public key of the feed, checks its fingerprint, trusts it with `opkg-key
+add`, points opkg at the feed and installs the portal from it. It is the
+same chain the check of the emulated guest goes through, only on the device.
+
+The router is not in the inventory of this project: it belongs to the
+serverside repo, and the play is run with the inventory of it:
+
+```sh
+ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+```
+
+The play carries the ssh settings of the device itself (dropbear has no
+sftp, `/tmp` is the scratch space), so it works with any inventory that has
+the host `router`. The configuration of the portal, the zone of the firewall
+and the service are not in the play — they need the password of the portal.
+
+The play was never run against the router: only the syntax of it was
+checked. The user runs it.
 
 ## The checks
 
