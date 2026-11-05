@@ -10,6 +10,7 @@ OpenWrt before it is published: the package is installed there with opkg and
 a real WireGuard tunnel is made through it.
 
 Releases: <https://github.com/nhths/wg-portal-openwrt/releases>
+The upstream project: <https://github.com/h44z/wg-portal>
 
 ## Install
 
