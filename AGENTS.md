@@ -49,7 +49,6 @@ ansible/
   ansible.cfg
   requirements.yml           the collections the play needs
   vars/main.yml              the defaults of the check
-  vars/router.yml            the url of the feed and the fingerprint of its key
   roles/opwrt/tasks/         the setup: the feed, the portal, the service
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
@@ -431,25 +430,38 @@ are, but `latest` points at the newest one.
 
 ### The play for the router
 
-`ansible/router.yml` installs the feed on the real router: it copies the
+`ansible/router.yml` installs the feed on the real router: it fetches the
 public key of the feed, checks its fingerprint, trusts it with `opkg-key
 add`, points opkg at the feed and installs the portal from it. It is the
 same chain the check of the emulated guest goes through, only on the device.
 
-The router is not in the inventory of this project: it belongs to the
-serverside repo, and the play is run with the inventory of it:
+The play is self-contained — it needs nothing but Ansible and the access to
+the router:
+
+- the public key it fetches itself, from the release;
+- the address of the router is a variable of the play (`router_address`), and
+  the key of it is another one (`router_ssh_key`, empty means the default key
+  of the machine);
+- the inventory is not needed: the router is registered by the play itself
+  (`add_host`). If the inventory has a host named `router`, that one is used
+  as it is.
 
 ```sh
-ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+ansible-playbook ansible/router.yml
 ```
 
-The play carries the ssh settings of the device itself (dropbear has no
-sftp, `/tmp` is the scratch space), so it works with any inventory that has
-the host `router`. The configuration of the portal, the zone of the firewall
-and the service are not in the play — they need the password of the portal.
+Only the modules of Ansible itself are used: the modules of the
+community.openwrt collection would need a collection that is not in Ansible,
+and the play has to work where nothing was installed for it. The router has
+no Python, so the commands run through the `raw` module — it needs no
+interpreter on the device.
 
-The play was never run against the router: only the syntax of it was
-checked. The user runs it.
+The configuration of the portal, the zone of the firewall and the service are
+not in the play — they need the password of the portal.
+
+The play was never run against the router — the user runs it. It was checked
+against the emulated guest instead: the same device, the same OpenWrt, with
+the feed of the check instead of the one of the release.
 
 ## The checks
 

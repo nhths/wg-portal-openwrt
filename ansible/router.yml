@@ -1,43 +1,82 @@
 ---
 # The feed of the portal on the LAN router.
 #
-# The router is not in the inventory of this project: it is a machine of the
-# infrastructure, and the inventory that owns it is the one of the serverside
-# repo — the group [openwrt_hosts], the host router. Any inventory with that
-# host works:
+# The play is self-contained: it needs nothing but Ansible and the access to
+# the router. The public key of the feed it fetches itself, the address of
+# the router is a variable of the play, and the inventory is not needed — the
+# router is registered here. If the inventory has a host named "router",
+# that one is used as it is.
 #
-#   ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+#   ansible-playbook ansible/router.yml
+#   ansible-playbook ansible/router.yml -e router_address=192.168.31.1
 #
-# The play does what the README describes by hand: it trusts the key of the
-# feed, points opkg at the feed and installs the portal from it. The
-# configuration of the portal, the zone of the firewall and the service stay
-# as they are — they need the password of the portal, and the README has
+# Only the modules of Ansible itself are used. The modules of the
+# community.openwrt collection would need a collection that is not in Ansible,
+# and this play has to work on a machine where nothing was installed for it.
+#
+# The router is an OpenWrt on dropbear: it has no Python, so the commands
+# run through the raw module, which needs no interpreter on the device.
+#
+# The configuration of the portal, the zone of the firewall and the service
+# are not here: they need the password of the portal, and the README has
 # them.
-#
+
+- name: Register the router
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # The address of the LAN router. The inventory of the serverside repo
+    # owns the value — this is the default, so that the play works on its
+    # own, and it is overridden with -e router_address=...
+    router_address: 192.168.31.1
+    router_user: root
+    # The private key of the router. Empty means the default one of the
+    # machine the play runs on.
+    router_ssh_key: ""
+  tasks:
+    - name: Add the router to the inventory
+      ansible.builtin.add_host:
+        name: router
+        ansible_host: "{{ router_address }}"
+        ansible_user: "{{ router_user }}"
+        ansible_ssh_private_key_file: "{{ router_ssh_key if router_ssh_key else omit }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+      # The variable of the inventory is not there when no inventory was
+      # parsed at all — the play has to work without one.
+      when: "'router' not in (ansible_inventory_hostnames | default({}))"
+
 - name: Install the feed of the portal on the router
   hosts: router
   gather_facts: false
-  vars_files:
-    - vars/router.yml
   vars:
-    # The router is an OpenWrt on dropbear: it has no sftp, so the files go
-    # over scp, and /tmp is the only roomy scratch space on it.
-    ansible_user: root
-    ansible_remote_tmp: /tmp
-    ansible_scp_if_ssh: smart
-    ansible_ssh_transfer_method: smart
-    ansible_ssh_use_tty: false
-    ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new
+    # The feed of the portal: the directory of the download of the last
+    # release. opkg takes the index and the packages of the feed from it.
+    feed_url: https://github.com/nhths/wg-portal-openwrt/releases/latest/download
+    # The public key of the feed, in the release next to the index.
+    feed_key_url: "{{ feed_url }}/wg-portal.pub"
+    # The fingerprint of the key of the feed. It is the one of the key in
+    # keys/wg-portal.pub, and the README has it as well.
+    feed_fingerprint: 4aae624e9d888fea
   tasks:
-    - name: Copy the public key of the feed to the router
-      community.openwrt.copy:
-        src: "{{ playbook_dir }}/../keys/wg-portal.pub"
-        dest: "/tmp/wg-portal.pub"
-        mode: "0644"
+    - name: Fetch the public key of the feed
+      # The key is fetched by the machine the play runs on, not by the router:
+      # the router has no Python, and the module of the url needs one.
+      ansible.builtin.uri:
+        url: "{{ feed_key_url }}"
+        return_content: true
+        follow_redirects: all
+      delegate_to: localhost
+      register: feed_key
+
+    - name: Write the key to the router
+      # The copy module of Ansible needs Python on the device, and the router
+      # has none — the file is written through the shell instead.
+      ansible.builtin.raw: |
+        printf '%s\n' {{ feed_key.content | trim | quote }} > /tmp/wg-portal.pub
+      changed_when: true
 
     - name: Read the fingerprint of the key
-      community.openwrt.command:
-        cmd: "usign -F -p /tmp/wg-portal.pub"
+      ansible.builtin.raw: "usign -F -p /tmp/wg-portal.pub"
       register: router_fingerprint
       changed_when: false
 
@@ -60,26 +99,17 @@
       # opkg-key puts the key into /etc/opkg/keys under its fingerprint, and
       # opkg checks the signature of the index of the feed against the keys
       # it trusts.
-      community.openwrt.command:
-        cmd: "opkg-key add /tmp/wg-portal.pub"
-      register: router_key
+      ansible.builtin.raw: "opkg-key add /tmp/wg-portal.pub"
       changed_when: false
 
-    - name: Report the key of the feed
-      ansible.builtin.debug:
-        msg: "{{ router_key.stdout }}"
-
     - name: Point opkg at the feed of the portal
-      community.openwrt.lineinfile:
-        path: /etc/opkg/customfeeds.conf
-        line: "src wgp {{ feed_url }}"
-        state: present
-        create: true
-        mode: "0644"
+      ansible.builtin.raw: >-
+        grep -q "^src wgp {{ feed_url }}$" /etc/opkg/customfeeds.conf 2>/dev/null
+        || echo "src wgp {{ feed_url }}" >> /etc/opkg/customfeeds.conf
+      changed_when: false
 
     - name: Update the lists of opkg
-      community.openwrt.command:
-        cmd: "opkg update"
+      ansible.builtin.raw: "opkg update"
       register: router_update
       changed_when: false
       until: router_update.rc == 0
@@ -91,8 +121,7 @@
         msg: "{{ router_update.stdout }}"
 
     - name: Check whether the portal is installed
-      community.openwrt.command:
-        cmd: "opkg status wg-portal"
+      ansible.builtin.raw: "opkg status wg-portal"
       register: router_status
       changed_when: false
       failed_when: false
@@ -101,20 +130,19 @@
       # A package that is not on the router yet is installed, a package that
       # is there is upgraded: opkg does not reinstall a package of the same
       # version, and the feed is what brings the next one by itself.
-      community.openwrt.command:
-        cmd: >-
-          {{ 'opkg upgrade wg-portal' if 'Status:' in router_status.stdout
-          else 'opkg install wg-portal' }}
+      ansible.builtin.raw: >-
+        {{ 'opkg upgrade wg-portal' if 'Status:' in router_status.stdout
+        else 'opkg install wg-portal' }}
       register: router_install
-      changed_when: false
+      changed_when: >-
+        'Installing' in router_install.stdout or 'Upgrading' in router_install.stdout
 
     - name: Report the installation
       ansible.builtin.debug:
         msg: "{{ router_install.stdout }}"
 
     - name: Report the state of the portal and of its dependency
-      community.openwrt.command:
-        cmd: "opkg status wg-portal kmod-wireguard"
+      ansible.builtin.raw: "opkg status wg-portal kmod-wireguard"
       register: router_state
       changed_when: false
 

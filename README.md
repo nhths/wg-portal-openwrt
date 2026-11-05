@@ -66,18 +66,27 @@ itself: that is what the feed is for.
 
 ### With Ansible
 
-The play `ansible/router.yml` does the same on the LAN router: it trusts the
-key of the feed, points opkg at the feed and installs the portal from it.
-The router is not in the inventory of this project — the inventory that owns
-it is the one of the serverside repo (the group `[openwrt_hosts]`, the host
-`router`), so it is passed with `-i`:
+The play `ansible/router.yml` does the same on the LAN router: it fetches
+the public key of the feed, checks its fingerprint, trusts it, points opkg
+at the feed and installs the portal from it.
+
+It needs nothing but Ansible and the access to the router: the play is a
+single file with no dependencies of its own — the key it fetches itself,
+the address of the router is a variable of the play, and the inventory is
+not needed: the router is registered by the play itself. (If the inventory
+has a host named `router`, that one is used as it is.)
 
 ```sh
-ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+ansible-playbook ansible/router.yml
 ```
 
-The path is from the root of this project, which lives in `separated/` of the
-serverside repo. Any inventory with that host works.
+The access is ssh as `root`, with the key of the machine the play runs on.
+The address of the router is the default of the play — the address of the
+LAN router. Another one, another key:
+
+```sh
+ansible-playbook ansible/router.yml -e router_address=192.168.31.1 -e router_ssh_key=~/.ssh/id_ed25519
+```
 
 The play checks the fingerprint of the key before it trusts it: the key has
 to be the one of the project (`4aae624e9d888fea`).
