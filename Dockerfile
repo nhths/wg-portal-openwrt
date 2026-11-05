@@ -2,10 +2,13 @@
 # inside and a WireGuard client next to it.
 #
 #   docker build -t wg-portal-check .
-#   docker run --rm --device /dev/net/tun --cap-add NET_ADMIN wg-portal-check
+#   docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
+#     wg-portal-check
 #
-# The check needs the tun device (the tap between the host and the guest) and
-# the right to create the network interfaces in the namespace of the container.
+# The check needs the tun device (the tap between the host and the guest), the
+# right to create the network interfaces in the namespace of the container, and
+# the right to open a raw socket — the ping of the client needs it, and podman
+# does not give it by default.
 
 # The usign of OpenWrt: the tool that signs the feeds of opkg. It is a build
 # of OpenWrt for musl, so it comes with its own loader and libraries.

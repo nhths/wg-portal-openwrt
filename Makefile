@@ -84,7 +84,7 @@ image: dist usign-image ## Build the image of the WireGuard check
 	$(DOCKER) build --platform $(PLATFORM) -t $(IMAGE):$(TAG) -f Dockerfile .
 
 check-wireguard: image ## Check a real WireGuard tunnel in the image of the check
-	$(DOCKER) run --rm --device /dev/net/tun --cap-add NET_ADMIN $(IMAGE):$(TAG)
+	$(DOCKER) run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW $(IMAGE):$(TAG)
 
 build-src: ## Build wg-portal from source and compare the sizes
 	./scripts/build-src.sh

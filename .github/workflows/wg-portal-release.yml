@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.portal.outputs.version }}"
-          docker run --rm --device /dev/net/tun --cap-add NET_ADMIN \
+          docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
             "wg-portal-check:$version"
 
       - name: Write the notes of the release

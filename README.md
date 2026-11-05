@@ -29,7 +29,7 @@ of it (`wg-portal.pub`). The index is signed with `usign` — the tool OpenWrt
 signs its own feeds with — and opkg checks the signature against the keys
 the router trusts.
 
-Four commands on the router:
+On the router:
 
 ```sh
 wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub

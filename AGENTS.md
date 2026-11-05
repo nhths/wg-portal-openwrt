@@ -471,15 +471,21 @@ with the portal inside and the WireGuard client next to it, in one container.
 
 ```sh
 docker build -t wg-portal-check .
-docker run --rm --device /dev/net/tun --cap-add NET_ADMIN wg-portal-check
+docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
+  wg-portal-check
 ```
 
 The container needs the tun device (`--device /dev/net/tun`) and the right to
 create the network interfaces in its namespace (`--cap-add NET_ADMIN`): the
 tap between the host and the guest and the WireGuard interface of the client
-are both created there. The image brings QEMU, the WireGuard tools, the guest
-(the rootfs, the kernel and the kernel modules) and Ansible with the
-collection — the check itself needs no network.
+are both created there. It needs the raw socket as well (`--cap-add
+NET_RAW`): the ping of the client through the tunnel is an `iputils-ping`,
+which opens a raw socket — docker gives the capability by default, podman
+does not, and without it the ping fails with "ping: Operation not permitted"
+on the standard error, where the log of the check does not show it. The image
+brings QEMU, the WireGuard tools, the guest (the rootfs, the kernel and the
+kernel modules) and Ansible with the collection — the check itself needs no
+network.
 
 The tun device is a device of the machine the container runs on: the `tun`
 module has to be loaded there (`modprobe tun`). The runner of the group does
