@@ -64,6 +64,27 @@ gives the current version — running it again updates the package. But opkg
 does not know where the package came from, so it cannot update it by
 itself: that is what the feed is for.
 
+### With Ansible
+
+The play `ansible/router.yml` does the same on the LAN router: it trusts the
+key of the feed, points opkg at the feed and installs the portal from it.
+The router is not in the inventory of this project — the inventory that owns
+it is the one of the serverside repo (the group `[openwrt_hosts]`, the host
+`router`), so it is passed with `-i`:
+
+```sh
+ansible-playbook -i ../../ansible/inventory.ini ansible/router.yml
+```
+
+The path is from the root of this project, which lives in `separated/` of the
+serverside repo. Any inventory with that host works.
+
+The play checks the fingerprint of the key before it trusts it: the key has
+to be the one of the project (`4aae624e9d888fea`).
+
+The configuration of the portal, the zone of the firewall and the service are
+not in the play — they need the password of the portal, and they are below.
+
 ### Configuration
 
 The package carries no configuration, so the portal needs one before the
@@ -119,6 +140,9 @@ The router can do it on its own — once a night, for example:
 echo '0 4 * * * opkg update && opkg upgrade wg-portal >/dev/null 2>&1' >> /etc/crontabs/root
 /etc/init.d/cron restart
 ```
+
+The play does the same: run it again and the portal is upgraded to the
+version of the feed.
 
 ## Build
 
