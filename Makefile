@@ -2,8 +2,7 @@
 # .ipk package for the router.
 #
 # Measurements and install checks run inside a fully emulated arm64 guest
-# (qemu-system-aarch64). qemu-user cannot be used: under it the generic
-# netlink socket is unavailable, so wg-portal refuses to start.
+# (qemu-system-aarch64).
 #
 # The WireGuard check runs in its own image: the emulated router with the
 # portal inside and a WireGuard client next to it.
@@ -63,7 +62,7 @@ lint: ## Run shellcheck, ansible-lint and markdownlint
 	  && shellcheck -S warning scripts/*.sh \
 	  && ansible-lint ansible/ \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/site.yml \
-	  && markdownlint --config .markdownlint.json README.md wg-portal-upx-ipk-bench.md'
+	  && markdownlint --config .markdownlint.json README.md AGENTS.md wg-portal-upx-ipk-bench.md'
 
 clean: ## Remove the build artifacts
 	rm -rf $(DIST)
