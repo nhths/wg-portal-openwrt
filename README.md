@@ -71,8 +71,16 @@ the public key of the feed, checks its fingerprint, trusts it, points opkg
 at the feed and installs the portal from it.
 
 It is a single file with no dependencies of its own — it needs nothing but
-Ansible and the access to the router. It can be taken from the mirror
-without the repository:
+Ansible and the access to the router. It can be piped straight from the
+mirror into Ansible, without the repository and without a file on the disk:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml \
+  | ansible-playbook /dev/stdin
+```
+
+The path of the playbook is `/dev/stdin`: `ansible-playbook -` does not read
+the playbook from the pipe. If the file is wanted on the disk instead:
 
 ```sh
 curl -sSLo router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
