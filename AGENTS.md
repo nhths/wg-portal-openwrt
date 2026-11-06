@@ -450,6 +450,15 @@ the router:
 ansible-playbook ansible/router.yml
 ```
 
+The play is a single file with no dependencies of its own, so it can be
+piped from the mirror into Ansible — the path of the playbook is
+`/dev/stdin`, `ansible-playbook -` does not read it from the pipe:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml \
+  | ansible-playbook /dev/stdin
+```
+
 Only the modules of Ansible itself are used: the modules of the
 community.openwrt collection would need a collection that is not in Ansible,
 and the play has to work where nothing was installed for it. The router has
@@ -461,7 +470,8 @@ not in the play — they need the password of the portal.
 
 The play was never run against the router — the user runs it. It was checked
 against the emulated guest instead: the same device, the same OpenWrt, with
-the feed of the check instead of the one of the release.
+the feed of the check instead of the one of the release. Both ways were
+checked — the file of the repository and the play piped from the mirror.
 
 ## The checks
 
