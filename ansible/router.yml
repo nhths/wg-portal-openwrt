@@ -308,6 +308,14 @@
         name: firewall
         state: reloaded
 
+    - name: Look for the proxy of the router
+      community.openwrt.command:
+        cmd: "test -f /etc/init.d/podkop && test -f /etc/config/podkop"
+        uses_shell: true
+      register: podkop_present
+      changed_when: false
+      failed_when: false
+
     - name: Read the interfaces of the proxy of the router
       # The dns of the router answers with the fake addresses of the proxy, and
       # the proxy intercepts the traffic to them. The tunnel has to be in the
@@ -321,18 +329,20 @@
       register: podkop_interfaces
       changed_when: false
       failed_when: false
+      when: podkop_present.rc == 0
 
     - name: Let the tunnel through the proxy of the router
       community.openwrt.uci:
+        autocommit: true
         command: set
         config: podkop
         section: settings
         option: source_network_interfaces
         value: >-
           {{ (podkop_interfaces.result | default('', true)).split(' ')
-          | union([tunnel_interface]) | join(' ') }}
+          | select('ne', '') | list | union([tunnel_interface]) | join(' ') }}
       notify: Restart the proxy of the router
-      when: podkop_interfaces is not failed
+      when: podkop_present.rc == 0
 
     - name: Enable and start the portal
       # The postinst of the package only enables the service: an upgrade of

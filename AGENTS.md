@@ -734,7 +734,8 @@ The tunnel has to be in the list of the interfaces of the proxy
 (`source_network_interfaces`), or the peers get the same fake addresses and
 their traffic to them is not intercepted: it goes to the internet as it is,
 and nobody answers it. The play adds the interface to the list and restarts
-the proxy.
+the proxy — when the router has a proxy at all: the play looks for the config
+and the service of it first, and leaves the router alone when there is none.
 
 ### The routing of the router
 
