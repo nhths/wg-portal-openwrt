@@ -372,28 +372,35 @@
       register: firewall_rule
       changed_when: "'changed' in firewall_rule.stdout"
 
-    - name: Masquerade the traffic of the tunnel
-      # The addresses of the tunnel are not routable outside of the LAN, so
-      # the traffic of the peers has to be masqueraded on the way out to the
-      # internet — the same way the traffic of the lan is. The wan zone does
-      # it on its own, but the rule of the tunnel says it in the rules of
-      # the firewall as well.
+    - name: Masquerade the traffic that leaves to the internet
+      # The peers reach the internet through the router, and the router is
+      # behind the gateway of the LAN: the addresses of the tunnel are not
+      # routable outside of it, so the traffic has to be masqueraded on the
+      # way out. In fw4 it is the zone of the wan that does it — the zone
+      # masquerades the traffic that leaves through it.
+      #
+      # The zone is found by its name: the sections of the zones are
+      # anonymous, and their numbers move.
       ansible.builtin.raw: >-
-        before="$(uci show firewall.wg_masquerade 2>/dev/null)";
-        uci set firewall.wg_masquerade="nat" 2>/dev/null
-        || (uci -q delete firewall.wg_masquerade;
-        uci set firewall.wg_masquerade="nat");
-        uci set firewall.wg_masquerade.name="Masquerade-WireGuard";
-        uci set firewall.wg_masquerade.src="wg";
-        uci set firewall.wg_masquerade.dest="wan";
-        uci set firewall.wg_masquerade.target="MASQUERADE";
-        uci set firewall.wg_masquerade.family="ipv4";
-        [ -n {{ tunnel_network | quote }} ]
-        && uci set firewall.wg_masquerade.src_ip={{ tunnel_network | quote }};
-        after="$(uci show firewall.wg_masquerade 2>/dev/null)";
+        section="$(uci show firewall | grep -E "^firewall\.[^.]+\.name='wan'$" | cut -d. -f2)";
+        [ -n "$section" ] || exit 0;
+        before="$(uci show firewall.$section)";
+        uci set firewall.$section.masq='1';
+        after="$(uci show firewall.$section)";
         [ "$before" = "$after" ] && echo unchanged || echo changed
+      register: firewall_masq
+      changed_when: "'changed' in firewall_masq.stdout"
+
+    - name: Take the masquerade of the tunnel away
+      # A rule of the firewall of its own for the tunnel masquerades the
+      # traffic the wrong way round: fw4 puts it into the chain of the zone
+      # of the source, and that chain is entered by the traffic that leaves
+      # through the zone — so such a rule masquerades the traffic that goes
+      # into the tunnel, not the traffic that comes out of it. The zone of
+      # the wan masquerades the traffic on the way out, and that is enough.
+      ansible.builtin.raw: "uci -q delete firewall.wg_masquerade"
       register: firewall_nat
-      changed_when: "'changed' in firewall_nat.stdout"
+      changed_when: firewall_nat.rc == 0
 
     - name: Write the firewall
       ansible.builtin.raw: "uci commit firewall"
@@ -402,6 +409,31 @@
     - name: Reload the firewall
       ansible.builtin.raw: "/etc/init.d/firewall reload"
       changed_when: false
+
+    - name: Let the tunnel through the proxy of the router
+      # The router has a transparent proxy on it (podkop), and the traffic of
+      # the lan goes through it: the dns of the router answers with the fake
+      # addresses of the proxy, and the proxy intercepts the traffic to them.
+      # The tunnel has to be in the list of the interfaces of the proxy as
+      # well — otherwise the peers get the same fake addresses, and their
+      # traffic to them is not intercepted: it goes to the internet as it
+      # is, and nobody answers it.
+      #
+      # The proxy is not on every router: the task does nothing where there
+      # is none.
+      ansible.builtin.raw: >-
+        uci -q get podkop.settings.source_network_interfaces >/dev/null || exit 0;
+        before="$(uci get podkop.settings.source_network_interfaces)";
+        case " $before " in
+          *" {{ tunnel_interface }} "*) echo unchanged; exit 0;;
+        esac;
+        new="$(echo "$before {{ tunnel_interface }}" | tr -s ' ' | sed 's/^ //;s/ $//')";
+        uci set podkop.settings.source_network_interfaces="$new";
+        uci commit podkop;
+        /etc/init.d/podkop restart >/dev/null;
+        echo changed
+      register: podkop_interfaces
+      changed_when: "'changed' in podkop_interfaces.stdout"
 
     - name: Enable and start the portal
       ansible.builtin.raw: "/etc/init.d/wg-portal enable; /etc/init.d/wg-portal start"

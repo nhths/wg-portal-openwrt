@@ -702,20 +702,31 @@ config rule
         option proto 'udp'
         option dest_port '62820'
         option target 'ACCEPT'
-
-config nat
-        option name 'Masquerade-WireGuard'
-        option src 'wg'
-        option dest 'wan'
-        option src_ip '172.26.0.0/24'
-        option target 'MASQUERADE'
 ```
 
+The masquerade of the traffic on the way out is the `masq` of the zone of
+the wan — the zone masquerades the traffic that leaves through it. A rule of
+the firewall of its own for the tunnel does the opposite of what it looks
+like it does: fw4 puts such a rule into the chain of the zone of the
+**source**, and that chain is entered by the traffic that leaves through the
+zone — so it masquerades the traffic that goes *into* the tunnel, and the
+peers never answer the ping of the portal.
+
 The port of the rule of the wan is the port of the variables of the play,
-and the network of the masquerade is the network of the interface — the
-second one is taken from the configuration the portal writes for the
-interface, the first one is checked against the port of that
-configuration.
+and it is checked against the port the portal writes for the interface.
+
+### The proxy of the router
+
+The router has a transparent proxy on it (podkop), and the traffic of the
+lan goes through it: the dns of the router answers with the fake addresses
+of the proxy (198.18.0.0/15), and the proxy intercepts the traffic to them
+with the mark `0x100000` and a tproxy to itself.
+
+The tunnel has to be in the list of the interfaces of the proxy
+(`source_network_interfaces`), or the peers get the same fake addresses and
+their traffic to them is not intercepted: it goes to the internet as it is,
+and nobody answers it. The play adds the interface to the list and restarts
+the proxy.
 
 ### The routing of the router
 

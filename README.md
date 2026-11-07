@@ -128,7 +128,7 @@ in the play as well — see below.
 
 The play `ansible/router.yml` does it: it writes the configuration of the
 portal when there is none yet, gives the tunnel a zone of the firewall, lets
-the peers in from the internet, masquerades the traffic of the tunnel and
+the peers in from the internet, masquerades the traffic on the way out and
 starts the service.
 
 The port of the tunnel is a variable of the play: the standard port of
@@ -136,6 +136,12 @@ WireGuard by default, another one with `-e wireguard_port=...`. The play
 checks it against the port the portal really listens on and stops when they
 are not the same — the rule of the firewall would open a port nobody listens
 on.
+
+Where the router has a transparent proxy (podkop), the play adds the tunnel
+to the interfaces of the proxy: the peers use the dns of the router, and it
+answers them with the fake addresses of the proxy — without the tunnel in
+the list of the proxy, their traffic to those addresses is not intercepted
+and goes to the internet as it is.
 
 The portal owns the configuration of itself: the play writes it only when
 there is none, and it never touches the password of the administrator
@@ -168,6 +174,16 @@ config zone
         list device 'wg0'
         option input 'ACCEPT'
 ```
+
+The traffic of the peers is masqueraded by the zone of the wan
+(`option masq '1'`) — the zone masquerades the traffic that leaves through
+it. A rule of the firewall of its own for the tunnel does the opposite of
+what it looks like it does: fw4 puts it into the chain of the zone of the
+source, and it masquerades the traffic that goes *into* the tunnel.
+
+Where the router has a transparent proxy (podkop), the tunnel has to be in
+the interfaces of it (`source_network_interfaces`) — the peers use the dns of
+the router, and it answers them with the fake addresses of the proxy.
 
 And then the service:
 
