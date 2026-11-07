@@ -378,10 +378,20 @@ The index is published twice: as it is (`Packages`) and compressed
 of the feeds with `gzip -cd` (`/usr/libexec/package-manager-call
 list-available`), and that skips the files which are not compressed: with a
 plain index only, the package is invisible to LuCI, and it shows up in the
-list of the installed packages without a size and without a description. opkg
-takes the compressed one itself, the same way it takes the indexes of the
-feeds of the firmware. The signature is over the plain index: the signature is
-checked against the index after it is unpacked.
+list of the installed packages without a size and without a description.
+
+opkg takes the compressed index only when the source is declared as `src/gz`
+— the name of the source tells opkg which file to take (`libopkg/opkg.c`:
+
+```c
+sprintf_alloc(&url, "%s/%s", src->value, src->gzip ? "Packages.gz" : "Packages");
+```
+
+The feeds of the firmware are declared that way in
+`/etc/opkg/distfeeds.conf`, so a plain `src` line makes opkg fetch the plain
+index, store it uncompressed, and leave LuCI with nothing to read. The
+signature is over the plain index — it is checked against the index after it
+is unpacked — so it does not change.
 
 ### The signature
 
@@ -431,7 +441,7 @@ Every release publishes four more assets next to the package: `Packages`,
 directory of the download of the last release:
 
 ```text
-src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
+src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
 ```
 
 The `Filename:` of the index carries the version, so the index is built

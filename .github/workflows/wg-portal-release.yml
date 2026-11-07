@@ -147,7 +147,7 @@ jobs:
             echo '```sh'
             echo "wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub"
             echo "opkg-key add /tmp/wg-portal.pub"
-            echo "echo 'src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf"
+            echo "echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf"
             echo "opkg update"
             echo "opkg install wg-portal"
             echo '```'

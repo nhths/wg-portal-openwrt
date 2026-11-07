@@ -35,7 +35,7 @@ On the router:
 wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub
 usign -F -p /tmp/wg-portal.pub
 opkg-key add /tmp/wg-portal.pub
-echo 'src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf
+echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf
 opkg update
 opkg install wg-portal
 ```
@@ -43,11 +43,13 @@ opkg install wg-portal
 The url of the feed is a directory: opkg takes `Packages` and `Packages.sig`
 from it by itself, and the package of the index from the same directory.
 
-The index is published twice, as it is and compressed. opkg takes the
-compressed one, and LuCI needs it as well: it reads the indexes of the feeds
-with `gzip -cd`, which skips the files that are not compressed — with a plain
-index only the package is invisible to it, and the list of the installed
-packages shows it without a size and without a description.
+The index is published twice, as it is and compressed. The source of the
+feed is declared as `src/gz` — the way the feeds of the firmware are declared
+— so opkg takes the compressed one, and LuCI needs it as well: it reads the
+indexes of the feeds with `gzip -cd`, which skips the files that are not
+compressed. With a plain index only, the package is invisible to LuCI, and
+the list of the installed packages shows it without a size and without a
+description.
 
 `usign -F -p` prints the fingerprint of the key — it has to be
 `4aae624e9d888fea`. The public half of the key is in the repository
