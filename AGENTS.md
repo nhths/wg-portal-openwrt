@@ -465,6 +465,13 @@ and the play has to work where nothing was installed for it. The router has
 no Python, so the commands run through the `raw` module — it needs no
 interpreter on the device.
 
+The session of dropbear needs the keepalive of the client. dropbear drops a
+session that receives nothing for 300 seconds (`-K 300`), and it counts the
+packets it reads — Ansible sends nothing while a command runs, so the
+session dies in the middle of the download of the package or of the update
+of the lists. The `ServerAliveInterval` of the ssh settings is what keeps
+it alive.
+
 The configuration of the portal, the zone of the firewall and the service are
 not in the play — they need the password of the portal.
 
