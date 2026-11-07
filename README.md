@@ -24,10 +24,10 @@ The upstream project: <https://github.com/h44z/wg-portal>
 ### Through the feed
 
 Every release carries a feed of its own: the index of the packages
-(`Packages`), the signature of the index (`Packages.sig`) and the public key
-of it (`wg-portal.pub`). The index is signed with `usign` — the tool OpenWrt
-signs its own feeds with — and opkg checks the signature against the keys
-the router trusts.
+(`Packages` and `Packages.gz`), the signature of the index (`Packages.sig`)
+and the public key of it (`wg-portal.pub`). The index is signed with `usign`
+— the tool OpenWrt signs its own feeds with — and opkg checks the signature
+against the keys the router trusts.
 
 On the router:
 
@@ -42,6 +42,12 @@ opkg install wg-portal
 
 The url of the feed is a directory: opkg takes `Packages` and `Packages.sig`
 from it by itself, and the package of the index from the same directory.
+
+The index is published twice, as it is and compressed. opkg takes the
+compressed one, and LuCI needs it as well: it reads the indexes of the feeds
+with `gzip -cd`, which skips the files that are not compressed — with a plain
+index only the package is invisible to it, and the list of the installed
+packages shows it without a size and without a description.
 
 `usign -F -p` prints the fingerprint of the key — it has to be
 `4aae624e9d888fea`. The public half of the key is in the repository

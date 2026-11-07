@@ -35,5 +35,11 @@ CONTROL=$(tar -xzOf "$IPK" ./control.tar.gz | tar -xzO ./control)
 
 cp "$PUBKEY" "$DIST/wg-portal.pub"
 
+# The index is published twice: as it is and compressed. LuCI reads the
+# indexes of the feeds with "gzip -cd", and it skips the files that are not
+# compressed — a plain index is invisible to it, and the package shows up in
+# the list of the installed ones without a size and without a description.
+gzip -9 -c "$DIST/Packages" > "$DIST/Packages.gz"
+
 echo "=== the index of the feed"
 cat "$DIST/Packages"
