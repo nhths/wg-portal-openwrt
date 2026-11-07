@@ -97,20 +97,15 @@ ansible-galaxy collection install -r ansible/requirements.yml
 Its modules are ucode scripts, and the router runs them: the router has no
 Python, and it needs none.
 
-Apart from that, it is a single file — it can be piped straight from the
-mirror into Ansible, without the repository and without a file on the disk:
+Apart from that, it is the play and its vars file — the ports of the
+router are in `ansible/vars/router.yml`, next to the play. Both can be
+fetched from the mirror and run from the directory they are fetched into:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml \
-  | ansible-playbook /dev/stdin
-```
-
-The path of the playbook is `/dev/stdin`: `ansible-playbook -` does not read
-the playbook from the pipe. If the file is wanted on the disk instead:
-
-```sh
-curl -sSLo router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
-ansible-playbook router.yml
+mkdir -p ansible/vars
+curl -sSLo ansible/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
+curl -sSLo ansible/vars/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/vars/router.yml
+ansible-playbook ansible/router.yml
 ```
 
 The play fetches the public key of the feed itself, the address of the
@@ -140,11 +135,11 @@ portal when there is none yet, gives the tunnel a zone of the firewall, lets
 the peers in from the internet, masquerades the traffic on the way out and
 starts the service.
 
-The port of the tunnel is a variable of the play: the standard port of
-WireGuard by default, another one with `-e wireguard_port=...`. The play
-checks it against the port the portal really listens on and stops when they
-are not the same — the rule of the firewall would open a port nobody listens
-on.
+The ports are in `ansible/vars/router.yml`: the web interface of the portal
+and the tunnel. The port of the tunnel is the standard port of WireGuard by
+default, another one with `-e wireguard_port=...`. The play checks it
+against the port the portal really listens on and stops when they are not
+the same — the rule of the firewall would open a port nobody listens on.
 
 Where the router has a transparent proxy (podkop), the play adds the tunnel
 to the interfaces of the proxy: the peers use the dns of the router, and it

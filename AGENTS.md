@@ -51,6 +51,7 @@ ansible/
   ansible.cfg
   requirements.yml           the collections the play needs
   vars/main.yml              the defaults of the check
+  vars/router.yml            the ports of the real router
   roles/opwrt/tasks/         the setup: the feed, the portal, the service
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
@@ -481,13 +482,16 @@ Apart from that, the play needs nothing but the access to the router:
 ansible-playbook ansible/router.yml
 ```
 
-The play is a single file, so it can be piped from the mirror into Ansible —
-the path of the playbook is `/dev/stdin`, `ansible-playbook -` does not read
-it from the pipe:
+The play and its vars file are the two files of it: the ports of the router
+are in `ansible/vars/router.yml`, and the vars of a play are loaded from the
+directory of the playbook. Both are fetched from the mirror and run from the
+directory they are fetched into:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml \
-  | ansible-playbook /dev/stdin
+mkdir -p ansible/vars
+curl -sSLo ansible/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
+curl -sSLo ansible/vars/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/vars/router.yml
+ansible-playbook ansible/router.yml
 ```
 
 The firmware of the router ships `/etc/opkg/customfeeds.conf` full of null
@@ -509,12 +513,13 @@ none yet, puts the tunnel into the firewall — the zone by device, the
 forwardings in both directions, the rule of the wan and the masquerade of the
 traffic of the tunnel — and starts the service.
 
-The port of the tunnel is a variable of the play — the standard port of
-WireGuard by default, another one with `-e wireguard_port=...`. The play
-reads the port the portal really listens on from the configuration it writes
-for the interface (`{{ advanced.config_storage_path }}/<interface>.conf`) and
-stops when it is not the port of the variables: the rule of the firewall
-would open a port nobody listens on.
+The ports are in `ansible/vars/router.yml`: the web interface of the portal
+and the tunnel. The port of the tunnel is the standard port of WireGuard by
+default, another one with `-e wireguard_port=...`. The play reads the port
+the portal really listens on from the configuration it writes for the
+interface (`{{ advanced.config_storage_path }}/<interface>.conf`) and stops
+when it is not the port of the variables: the rule of the firewall would open
+a port nobody listens on.
 
 The play was never run against the router — the user runs it. It was checked
 against the emulated guest instead: the same device, the same OpenWrt, with

@@ -1,43 +1,18 @@
 ---
-# The feed of the portal on the LAN router.
-#
-# The play needs the community.openwrt collection:
+# The feed of the portal on the LAN router, its firewall and its service.
 #
 #   ansible-galaxy collection install -r ansible/requirements.yml
-#
-# The modules of the collection are ucode scripts, and the router runs them:
-# no Python is needed on the device.
-#
-# The address of the router is a variable of the play, and the inventory is
-# not needed — the router is registered here. If the inventory has a host
-# named "router", that one is used as it is.
-#
-#   ansible-playbook ansible/router.yml
 #   ansible-playbook ansible/router.yml -e router_address=192.168.0.1
 #
-# The configuration of the portal, the zone of the firewall for the tunnel
-# and the service are here as well: the play writes the configuration of the
-# portal, opens the tunnel in the firewall and starts the service. The
-# interface of the tunnel and the peers are not: the portal creates them
-# itself, from its web interface.
-#
-# The port of the tunnel is a variable of the play: the standard port of
-# WireGuard by default, another one with -e wireguard_port=... The play
-# checks it against the port the portal really listens on — the portal
-# writes the configuration of the interface it made — and stops when they
-# are not the same.
+# The interface of the tunnel and the peers are not here: the portal creates
+# them itself, from its web interface.
 
 - name: Register the router
   hosts: localhost
   gather_facts: false
   vars:
-    # The address of the LAN router. The inventory of the serverside repo
-    # owns the value, but the play has to work without any inventory — this
-    # is the default, and it is overridden with -e router_address=...
     router_address: 192.168.0.1
     router_user: root
-    # The private key of the router. Empty means the default one of the
-    # machine the play runs on.
     router_ssh_key: ""
   tasks:
     - name: Add the router to the inventory
@@ -46,33 +21,22 @@
         ansible_host: "{{ router_address }}"
         ansible_user: "{{ router_user }}"
         ansible_ssh_private_key_file: "{{ router_ssh_key if router_ssh_key else omit }}"
-        # dropbear drops a session that gets nothing for 300 seconds, and it
-        # counts the packets it reads: the keepalive of the client is what
-        # keeps the session alive while opkg downloads the package.
+        # dropbear drops a session that gets nothing for 300 seconds.
         ansible_ssh_common_args: >-
           -o StrictHostKeyChecking=accept-new
           -o ServerAliveInterval=30
           -o ServerAliveCountMax=6
-      # The variable of the inventory is not there when no inventory was
-      # parsed at all — the play has to work without one.
       when: "'router' not in (ansible_inventory_hostnames | default({}))"
 
 - name: Install the feed of the portal on the router
   hosts: router
   gather_facts: false
   vars:
-    # The feed of the portal: the directory of the download of the last
-    # release. opkg takes the index and the packages of the feed from it.
     feed_url: https://github.com/nhths/wg-portal-openwrt/releases/latest/download
-    # The public key of the feed, in the release next to the index.
     feed_key_url: "{{ feed_url }}/wg-portal.pub"
-    # The fingerprint of the key of the feed. It is the one of the key in
-    # keys/wg-portal.pub, and the README has it as well.
     feed_fingerprint: 4aae624e9d888fea
   tasks:
     - name: Fetch the public key of the feed
-      # The key is fetched by the machine the play runs on, not by the router:
-      # the router has no Python, and the module of the url needs one.
       ansible.builtin.uri:
         url: "{{ feed_key_url }}"
         return_content: true
@@ -97,8 +61,6 @@
         msg: "{{ router_fingerprint.stdout }}"
 
     - name: Fail when the key is not the one of the project
-      # The key is trusted only when it is the one of the project: the
-      # fingerprint of it is in the README and in AGENTS.md.
       ansible.builtin.assert:
         that:
           - feed_fingerprint in router_fingerprint.stdout
@@ -108,26 +70,16 @@
         quiet: true
 
     - name: Trust the public key of the feed
-      # opkg-key puts the key into /etc/opkg/keys under its fingerprint, and
-      # opkg checks the signature of the index of the feed against the keys
-      # it trusts.
       community.openwrt.command:
         cmd: "opkg-key add /tmp/wg-portal.pub"
       changed_when: false
 
     - name: Point opkg at the feed of the portal
-      # The firmware of the router ships /etc/opkg/customfeeds.conf full of
-      # null bytes, and opkg does not read such a file: the feed of the
-      # portal stays invisible to it, and opkg answers "Cannot install
-      # package". The nulls are dropped, the lines that are left are kept,
-      # and the feed is added to them.
-      #
-      # The source is declared as "src/gz", the way the feeds of the firmware
-      # are declared: opkg takes the index of it compressed then, and stores
-      # it compressed. LuCI reads the indexes of the feeds with "gzip -cd",
-      # and it skips the ones that are not compressed — with a plain index
-      # the portal shows up in the list of the installed packages without a
-      # size and without a description.
+      # The firmware ships customfeeds.conf full of null bytes, and opkg does
+      # not read such a file. "src/gz" is the way the feeds of the firmware
+      # are declared: opkg takes the compressed index then, and LuCI needs it
+      # as well — it reads the indexes with "gzip -cd" and skips the plain
+      # ones.
       community.openwrt.command:
         cmd: >-
           [ -f /etc/opkg/customfeeds.conf ]
@@ -142,9 +94,6 @@
       changed_when: false
 
     - name: Install the portal from the feed
-      # A package that is not on the router yet is installed, a package that
-      # is there is upgraded: opkg does not reinstall a package of the same
-      # version, and the feed is what brings the next one by itself.
       community.openwrt.opkg:
         name: wg-portal
         state: present
@@ -164,25 +113,12 @@
 - name: Configure the portal on the router
   hosts: router
   gather_facts: false
+  vars_files:
+    - vars/router.yml
   vars:
-    # The password of the administrator of the portal. When it is empty, a
-    # password is made — and printed at the end of the play — but only when
-    # the configuration of the portal is written for the first time.
     portal_admin_password: ""
-    # The address and the port of the web interface of the portal.
     portal_web_address: 0.0.0.0
-    portal_web_port: 8888
-    # The port of the WireGuard server. The rule of the firewall that lets
-    # the peers in from the internet is made for it. The default is the
-    # standard port of WireGuard — the portal may listen on another one,
-    # and then the port is given with -e wireguard_port=...
-    wireguard_port: 51820
-    # The interface of the tunnel. The portal creates the interface by
-    # itself, so the firewall only has to know the device of it.
     tunnel_interface: wg0
-    # The directory of the configuration the portal writes for the interface
-    # of the tunnel. It is the "advanced.config_storage_path" of the
-    # configuration of the portal.
     tunnel_config_path: /etc/wireguard
   tasks:
     - name: Create the directory of the portal
@@ -197,8 +133,6 @@
       register: portal_configured
 
     - name: Make the password of the administrator
-      # The password is made on the router: it never travels through the
-      # machine the play runs on, unless it is given with -e.
       community.openwrt.command:
         cmd: >-
           [ -n {{ portal_admin_password | quote }} ] && echo {{ portal_admin_password | quote }}
@@ -209,10 +143,6 @@
       when: not portal_configured.stat.exists
 
     - name: Write the configuration of the portal
-      # The package carries no configuration, so the portal has none until
-      # this file is written. The database is on the flash: /tmp is a tmpfs.
-      # The configuration is written once — the portal owns it afterwards,
-      # and a second run of the play does not change the password.
       community.openwrt.copy:
         content: |
           core:
@@ -226,8 +156,6 @@
       when: not portal_configured.stat.exists
 
     - name: Report the password of the administrator
-      # The password is printed once, when the configuration is written: there
-      # is no other way to get it out of the router.
       ansible.builtin.debug:
         msg: >-
           the password of the administrator of the portal:
@@ -235,8 +163,6 @@
       when: not portal_configured.stat.exists
 
     - name: Read the port of the web interface of the portal
-      # The portal owns the configuration of itself, so the port of the web
-      # interface is the one it writes there — not the one of this play.
       community.openwrt.command:
         cmd: >-
           sed -n 's/^[[:space:]]*listening_address:[[:space:]]*//p'
@@ -251,9 +177,6 @@
           | default(portal_web_port | string, true) }}
 
     - name: Read the port of the tunnel
-      # The portal writes the configuration of the interface it made, and the
-      # port of the tunnel is in it. There is no such file while the portal
-      # has no interface yet.
       community.openwrt.command:
         cmd: >-
           sed -n 's/^[[:space:]]*ListenPort[[:space:]]*=[[:space:]]*//p'
@@ -277,10 +200,6 @@
         tunnel_network: "{{ (tunnel_address.stdout | trim) | default('', true) }}"
 
     - name: Check that the port of the tunnel is the port of the play
-      # The rule of the firewall is made for the port of the variables of the
-      # play, and the tunnel has to listen on it — otherwise the rule opens a
-      # port nobody listens on and the peers cannot come in. The play stops
-      # and says which port to give it.
       ansible.builtin.assert:
         that:
           - tunnel_port == "" or tunnel_port == wireguard_port | string
@@ -297,13 +216,8 @@
           the network of it is {{ tunnel_network | default('unknown', true) }}
 
     - name: Put the tunnel into the firewall
-      # The traffic of the peers is not tracked by the connection tracking of
-      # the firewall, so the default policy rejects it and the peer gets an
-      # "unreachable" instead of the answer.
-      #
       # The zone names the device, not a network: the interface of the tunnel
-      # is created by the portal itself and is not in /etc/config/network, so
-      # a network of that name would never match any traffic.
+      # is created by the portal itself and is not in /etc/config/network.
       community.openwrt.uci:
         autocommit: false
         operations:
@@ -323,8 +237,6 @@
             unique: true
 
     - name: Let the tunnel and the lan talk to each other
-      # The peers of the portal reach the services of the lan and the internet
-      # through the router, and the lan reaches the peers through the tunnel.
       community.openwrt.uci:
         autocommit: false
         operations:
@@ -350,9 +262,6 @@
           dest: wg
 
     - name: Let the peers in from the internet
-      # The rule has no zone of the destination: it opens the port of the
-      # WireGuard server on the router itself. The router is behind the
-      # gateway of the LAN, so the port has to be forwarded there as well.
       community.openwrt.uci:
         autocommit: false
         operations:
@@ -370,14 +279,9 @@
               target: ACCEPT
 
     - name: Masquerade the traffic that leaves to the internet
-      # The peers reach the internet through the router, and the router is
-      # behind the gateway of the LAN: the addresses of the tunnel are not
-      # routable outside of it, so the traffic has to be masqueraded on the
-      # way out. In fw4 it is the zone of the wan that does it — the zone
-      # masquerades the traffic that leaves through it.
-      #
-      # The zone is found by its name: the sections of the zones are
-      # anonymous, and their numbers move.
+      # The zone of the wan masquerades the traffic that leaves through it. A
+      # rule of its own for the tunnel would masquerade the traffic the wrong
+      # way round: fw4 puts it into the chain of the zone of the source.
       community.openwrt.uci:
         autocommit: false
         operations:
@@ -390,12 +294,6 @@
               masq: "1"
 
     - name: Take the masquerade of the tunnel away
-      # A rule of the firewall of its own for the tunnel masquerades the
-      # traffic the wrong way round: fw4 puts it into the chain of the zone
-      # of the source, and that chain is entered by the traffic that leaves
-      # through the zone — so such a rule masquerades the traffic that goes
-      # into the tunnel, not the traffic that comes out of it. The zone of
-      # the wan masquerades the traffic on the way out, and that is enough.
       community.openwrt.uci:
         command: delete
         key: firewall.wg_masquerade
@@ -411,16 +309,10 @@
         state: reloaded
 
     - name: Read the interfaces of the proxy of the router
-      # The router has a transparent proxy on it (podkop), and the traffic of
-      # the lan goes through it: the dns of the router answers with the fake
-      # addresses of the proxy, and the proxy intercepts the traffic to them.
-      # The tunnel has to be in the list of the interfaces of the proxy as
-      # well — otherwise the peers get the same fake addresses, and their
-      # traffic to them is not intercepted: it goes to the internet as it
-      # is, and nobody answers it.
-      #
-      # The proxy is not on every router: the task does nothing where there
-      # is none.
+      # The dns of the router answers with the fake addresses of the proxy, and
+      # the proxy intercepts the traffic to them. The tunnel has to be in the
+      # list of the interfaces of the proxy as well, or the traffic of the
+      # peers to those addresses is not intercepted.
       community.openwrt.uci:
         command: get
         config: podkop
@@ -443,9 +335,11 @@
       when: podkop_interfaces is not failed
 
     - name: Enable and start the portal
+      # The postinst of the package only enables the service: an upgrade of
+      # the package leaves the old binary running until it is restarted.
       community.openwrt.service:
         name: wg-portal
-        state: started
+        state: "{{ 'restarted' if router_install.changed | default(false) else 'started' }}"
         enabled: true
 
     - name: Wait for the portal to answer
@@ -471,8 +365,6 @@
 
   handlers:
     - name: Restart the proxy of the router
-      # The rules of the proxy are made when it starts: without the restart
-      # the interface of the tunnel is not in them.
       community.openwrt.service:
         name: podkop
         state: restarted
