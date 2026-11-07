@@ -35,13 +35,22 @@ On the router:
 wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub
 usign -F -p /tmp/wg-portal.pub
 opkg-key add /tmp/wg-portal.pub
-echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf
+tr -d '\000' < /etc/opkg/customfeeds.conf > /tmp/customfeeds.conf
+echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /tmp/customfeeds.conf
+cat /tmp/customfeeds.conf > /etc/opkg/customfeeds.conf
+rm -f /tmp/customfeeds.conf
 opkg update
 opkg install wg-portal
 ```
 
-The url of the feed is a directory: opkg takes `Packages` and `Packages.sig`
-from it by itself, and the package of the index from the same directory.
+The nulls are dropped on purpose: the firmware of this router ships
+`/etc/opkg/customfeeds.conf` full of them, and opkg does not read such a
+file — the feed of the portal stays invisible to it, and opkg answers
+"Cannot install package wg-portal".
+
+The url of the feed is a directory: opkg takes `Packages.gz` and
+`Packages.sig` from it by itself, and the package of the index from the
+same directory.
 
 The index is published twice, as it is and compressed. The source of the
 feed is declared as `src/gz` — the way the feeds of the firmware are declared
