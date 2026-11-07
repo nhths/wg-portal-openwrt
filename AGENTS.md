@@ -15,9 +15,11 @@ to build it. This file is everything else.
   Ansible (it renders the templates on the controller), the package by the
   script that builds it.
 - The packaging is a script (`scripts/build-ipk.sh`), not a play.
-- The real router is never touched: no Ansible against it, no `opkg` on it.
-  Everything runs in the emulated guest. The play `ansible/router.yml` is
-  written for the user, who runs it — the agent only checks its syntax.
+- The real router is only ever touched through the play `ansible/router.yml`
+  — never by hand over ssh. Everything else runs in the emulated guest. The
+  play is written for the user, who runs it, and it was run against the
+  router on the user's request: the firewall of the tunnel, the configuration
+  of the portal and the service.
 - Everything in the repository is in English.
 - `ARCH` is the exact value of `opkg print-architecture` on the router
   (`aarch64_cortex-a53`); opkg refuses the package otherwise.
@@ -499,7 +501,17 @@ packets it reads. The `ServerAliveInterval` of the ssh settings keeps the
 session alive while the package is downloaded.
 
 The configuration of the portal, the zone of the firewall and the service are
-not in the play — they need the password of the portal.
+in the play as well: it writes the configuration of the portal when there is
+none yet, puts the tunnel into the firewall — the zone by device, the
+forwardings in both directions, the rule of the wan and the masquerade of the
+traffic of the tunnel — and starts the service.
+
+The port of the tunnel is a variable of the play — the standard port of
+WireGuard by default, another one with `-e wireguard_port=...`. The play
+reads the port the portal really listens on from the configuration it writes
+for the interface (`{{ advanced.config_storage_path }}/<interface>.conf`) and
+stops when it is not the port of the variables: the rule of the firewall
+would open a port nobody listens on.
 
 The play was never run against the router — the user runs it. It was checked
 against the emulated guest instead: the same device, the same OpenWrt, with
@@ -665,6 +677,46 @@ the portal itself and is not in `/etc/config/network`, so a network of that
 name never matches any traffic — the zone stays empty and the traffic of the
 peer keeps hitting the default policy.
 
+The zone alone is not enough: the tunnel has to be let out to the lan and to
+the wan and in from the lan, the port of the tunnel has to be open on the
+wan, and the traffic of the peers has to be masqueraded on the way out — the
+addresses of the tunnel are not routable outside of the LAN. The play makes
+all of it:
+
+```text
+config forwarding
+        option src 'wg'
+        option dest 'lan'
+
+config forwarding
+        option src 'wg'
+        option dest 'wan'
+
+config forwarding
+        option src 'lan'
+        option dest 'wg'
+
+config rule
+        option name 'Allow-WireGuard'
+        option src 'wan'
+        option proto 'udp'
+        option dest_port '62820'
+        option target 'ACCEPT'
+
+config nat
+        option name 'Masquerade-WireGuard'
+        option src 'wg'
+        option dest 'wan'
+        option src_ip '172.26.0.0/24'
+        option target 'MASQUERADE'
+```
+
+The port of the rule of the wan is the port of the variables of the play,
+and the network of the masquerade is the network of the interface — the
+second one is taken from the configuration the portal writes for the
+interface, the first one is checked against the port of that
+configuration.
+
 ### The routing of the router
 
 The portal does not put the route of the peer into the main table. It gives
@@ -681,6 +733,35 @@ the number of that mark and adds a rule that sends the marked traffic there:
 The mask of the rule is empty, so it matches every packet, and the lookups of
 the guest find the route of the peer. The mark itself is never needed: the
 WireGuard module marks the encapsulated packets, not the plaintext ones.
+
+### The allowed IPs of the peers
+
+The allowed IPs of a peer are the addresses the server routes **to** that
+peer, and the portal writes them into the configuration of the interface. The
+module of WireGuard uses them twice: it picks the peer of a packet by its
+destination address, and it checks the source address of every decrypted
+packet against them — a packet whose source is not in them is dropped.
+
+Three things follow from that, and all of them were seen on the router:
+
+- The address of the peer itself is enough for a peer that reaches the
+  internet: its traffic is masqueraded by the firewall of the wan and comes
+  back to it by the route of the portal.
+- A peer that reaches the **lan** needs the network of the lan in its allowed
+  IPs — the source address of the packet of the lan client is not in the
+  address of the peer otherwise, and the module drops the packet. The client
+  has to route the network of the lan into the tunnel as well; its own
+  configuration is made by the portal.
+- Two peers with the **same** network in their allowed IPs shadow each other:
+  the trie of the module keeps one peer per prefix, and the traffic of one of
+  them is delivered to the other. The prefix of a peer is its network, so
+  `172.26.0.2/24` and `172.26.0.4/24` are the same prefix — `172.26.0.0/24` —
+  and only one of the two peers ever receives the traffic of the network.
+
+The address of the interface of the portal is the network itself
+(`172.26.0.0/24`): the network address is not a valid source address, so the
+router cannot originate the traffic to the peers by itself, and the ping of
+the portal to its peers fails for that reason.
 
 ## The workflow of the release
 
@@ -748,8 +829,10 @@ router itself. What is known about the difference:
 - The dsn of `templates/openwrt/config.yaml.j2` is `/tmp/wg.db` — fine in
   the guest, wrong on the router, where `/tmp` is a tmpfs and the database
   would be gone after a reboot.
-- The firewall zone for `wg0` exists only as a step of Ansible in the role
-  `tunnel`; on the router the zone has to be added by hand.
+- The firewall zone for `wg0` exists as a step of Ansible in the role
+  `tunnel` in the emulated guest; on the router the play `ansible/router.yml`
+  makes it, together with the forwardings, the rule of the wan and the
+  masquerade of the traffic of the tunnel.
 
 ## The caveats
 

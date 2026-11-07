@@ -17,9 +17,17 @@
 # The router is an OpenWrt on dropbear: it has no Python, so the commands
 # run through the raw module, which needs no interpreter on the device.
 #
-# The configuration of the portal, the zone of the firewall and the service
-# are not here: they need the password of the portal, and the README has
-# them.
+# The configuration of the portal, the zone of the firewall for the tunnel and
+# the service are here as well: the play writes the configuration of the
+# portal, opens the tunnel in the firewall and starts the service. The
+# interface of the tunnel and the peers are not: the portal creates them
+# itself, from its web interface.
+#
+# The port of the tunnel is a variable of the play: the standard port of
+# WireGuard by default, another one with -e wireguard_port=... The play
+# checks it against the port the portal really listens on — the portal
+# writes the configuration of the interface it made — and stops when they
+# are not the same.
 
 - name: Register the router
   hosts: localhost
@@ -173,3 +181,247 @@
     - name: Report the state of the portal and of its dependency
       ansible.builtin.debug:
         msg: "{{ router_state.stdout }}"
+
+- name: Configure the portal on the router
+  hosts: router
+  gather_facts: false
+  vars:
+    # The password of the administrator of the portal. When it is empty, a
+    # password is made — and printed at the end of the play — but only when
+    # the configuration of the portal is written for the first time.
+    portal_admin_password: ""
+    # The address and the port of the web interface of the portal.
+    portal_web_address: 0.0.0.0
+    portal_web_port: 8888
+    # The port of the WireGuard server. The rule of the firewall that lets
+    # the peers in from the internet is made for it. The default is the
+    # standard port of WireGuard — the portal may listen on another one,
+    # and then the port is given with -e wireguard_port=...
+    wireguard_port: 51820
+    # The interface of the tunnel. The portal creates the interface by
+    # itself, so the firewall only has to know the device of it.
+    tunnel_interface: wg0
+    # The directory of the configuration the portal writes for the interface
+    # of the tunnel. It is the "advanced.config_storage_path" of the
+    # configuration of the portal.
+    tunnel_config_path: /etc/wireguard
+  tasks:
+    - name: Create the directory of the portal
+      ansible.builtin.raw: "mkdir -p /etc/wg-portal && chmod 700 /etc/wg-portal"
+      changed_when: true
+
+    - name: Check whether the portal is configured
+      ansible.builtin.raw: "test -f /etc/wg-portal/config.yaml"
+      register: portal_configured
+      changed_when: false
+      failed_when: false
+
+    - name: Make the password of the administrator
+      # The password is made on the router: it never travels through the
+      # machine the play runs on, unless it is given with -e.
+      ansible.builtin.raw: >-
+        [ -n {{ portal_admin_password | quote }} ] && echo {{ portal_admin_password | quote }}
+        || (head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
+      register: portal_password
+      changed_when: false
+      when: portal_configured.rc != 0
+
+    - name: Write the configuration of the portal
+      # The package carries no configuration, so the portal has none until
+      # this file is written. The database is on the flash: /tmp is a tmpfs.
+      # The configuration is written once — the portal owns it afterwards,
+      # and a second run of the play does not change the password.
+      ansible.builtin.raw: >-
+        printf 'core:\n  admin_password: %s\nweb:\n  listening_address: %s:%s\ndatabase:\n  dsn: /etc/wg-portal/wg.db\n'
+        {{ portal_password.stdout | trim | quote }}
+        {{ portal_web_address | quote }} {{ portal_web_port | quote }}
+        > /etc/wg-portal/config.yaml;
+        chmod 600 /etc/wg-portal/config.yaml
+      changed_when: true
+      when: portal_configured.rc != 0
+
+    - name: Report the password of the administrator
+      # The password is printed once, when the configuration is written: there
+      # is no other way to get it out of the router.
+      ansible.builtin.debug:
+        msg: >-
+          the password of the administrator of the portal:
+          {{ portal_password.stdout | trim }}
+      when: portal_configured.rc != 0
+
+    - name: Read the port of the web interface of the portal
+      # The portal owns the configuration of itself, so the port of the web
+      # interface is the one it writes there — not the one of this play.
+      ansible.builtin.raw: >-
+        sed -n 's/^[[:space:]]*listening_address:[[:space:]]*//p'
+        /etc/wg-portal/config.yaml
+      register: portal_listening
+      changed_when: false
+
+    - name: Take the port of the web interface of the portal
+      ansible.builtin.set_fact:
+        portal_port: >-
+          {{ (portal_listening.stdout | trim).split(':')[-1] | trim
+          | default(portal_web_port | string, true) }}
+
+    - name: Read the port of the tunnel
+      # The portal writes the configuration of the interface it made, and the
+      # port of the tunnel is in it. There is no such file while the portal
+      # has no interface yet.
+      ansible.builtin.raw: >-
+        sed -n 's/^[[:space:]]*ListenPort[[:space:]]*=[[:space:]]*//p'
+        {{ tunnel_config_path }}/{{ tunnel_interface }}.conf 2>/dev/null || true
+      register: tunnel_listen
+      changed_when: false
+
+    - name: Read the network of the tunnel
+      ansible.builtin.raw: >-
+        sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p'
+        {{ tunnel_config_path }}/{{ tunnel_interface }}.conf 2>/dev/null || true
+      register: tunnel_address
+      changed_when: false
+
+    - name: Take the port and the network of the tunnel
+      ansible.builtin.set_fact:
+        tunnel_port: "{{ (tunnel_listen.stdout | trim) | default('', true) }}"
+        tunnel_network: "{{ (tunnel_address.stdout | trim) | default('', true) }}"
+
+    - name: Check that the port of the tunnel is the port of the play
+      # The rule of the firewall is made for the port of the variables of the
+      # play, and the tunnel has to listen on it — otherwise the rule opens a
+      # port nobody listens on and the peers cannot come in. The play stops
+      # and says which port to give it.
+      ansible.builtin.assert:
+        that:
+          - tunnel_port == "" or tunnel_port == wireguard_port | string
+        fail_msg: >-
+          the tunnel listens on the port {{ tunnel_port }}, and the rule of
+          the firewall is made for the port {{ wireguard_port }} — run the
+          play with -e wireguard_port={{ tunnel_port }}
+        quiet: true
+
+    - name: Report the port and the network of the tunnel
+      ansible.builtin.debug:
+        msg: >-
+          the tunnel listens on the port {{ tunnel_port | default('unknown', true) }},
+          the network of it is {{ tunnel_network | default('unknown', true) }}
+
+    - name: Put the tunnel into the firewall
+      # The traffic of the peers is not tracked by the connection tracking of
+      # the firewall, so the default policy rejects it and the peer gets an
+      # "unreachable" instead of the answer.
+      #
+      # The zone names the device, not a network: the interface of the tunnel
+      # is created by the portal itself and is not in /etc/config/network, so
+      # a network of that name would never match any traffic.
+      ansible.builtin.raw: >-
+        before="$(uci show firewall.wg 2>/dev/null)";
+        uci -q get firewall.wg >/dev/null || uci set firewall.wg="zone";
+        uci set firewall.wg.name="wg";
+        uci set firewall.wg.input="ACCEPT";
+        uci set firewall.wg.output="ACCEPT";
+        uci set firewall.wg.forward="ACCEPT";
+        uci -q del_list firewall.wg.device={{ tunnel_interface | quote }} || :;
+        uci add_list firewall.wg.device={{ tunnel_interface | quote }};
+        after="$(uci show firewall.wg 2>/dev/null)";
+        [ "$before" = "$after" ] && echo unchanged || echo changed
+      register: firewall_zone
+      changed_when: "'changed' in firewall_zone.stdout"
+
+    - name: Let the tunnel and the lan talk to each other
+      # The peers of the portal reach the services of the lan and the internet
+      # through the router, and the lan reaches the peers through the tunnel.
+      ansible.builtin.raw: >-
+        before="$(uci show firewall.{{ item.section }} 2>/dev/null)";
+        uci set firewall.{{ item.section }}="forwarding" 2>/dev/null
+        || (uci -q delete firewall.{{ item.section }};
+        uci set firewall.{{ item.section }}="forwarding");
+        uci set firewall.{{ item.section }}.src={{ item.src | quote }};
+        uci set firewall.{{ item.section }}.dest={{ item.dest | quote }};
+        after="$(uci show firewall.{{ item.section }} 2>/dev/null)";
+        [ "$before" = "$after" ] && echo unchanged || echo changed
+      loop:
+        - section: wg_to_lan
+          src: wg
+          dest: lan
+        - section: wg_to_wan
+          src: wg
+          dest: wan
+        - section: lan_to_wg
+          src: lan
+          dest: wg
+      register: firewall_forwarding
+      changed_when: "'changed' in firewall_forwarding.stdout"
+
+    - name: Let the peers in from the internet
+      # The rule has no zone of the destination: it opens the port of the
+      # WireGuard server on the router itself. The router is behind the
+      # gateway of the LAN, so the port has to be forwarded there as well.
+      ansible.builtin.raw: >-
+        before="$(uci show firewall.wg_incoming 2>/dev/null)";
+        uci set firewall.wg_incoming="rule" 2>/dev/null
+        || (uci -q delete firewall.wg_incoming;
+        uci set firewall.wg_incoming="rule");
+        uci set firewall.wg_incoming.name="Allow-WireGuard";
+        uci set firewall.wg_incoming.src="wan";
+        uci set firewall.wg_incoming.proto="udp";
+        uci set firewall.wg_incoming.dest_port={{ wireguard_port | quote }};
+        uci set firewall.wg_incoming.target="ACCEPT";
+        after="$(uci show firewall.wg_incoming 2>/dev/null)";
+        [ "$before" = "$after" ] && echo unchanged || echo changed
+      register: firewall_rule
+      changed_when: "'changed' in firewall_rule.stdout"
+
+    - name: Masquerade the traffic of the tunnel
+      # The addresses of the tunnel are not routable outside of the LAN, so
+      # the traffic of the peers has to be masqueraded on the way out to the
+      # internet — the same way the traffic of the lan is. The wan zone does
+      # it on its own, but the rule of the tunnel says it in the rules of
+      # the firewall as well.
+      ansible.builtin.raw: >-
+        before="$(uci show firewall.wg_masquerade 2>/dev/null)";
+        uci set firewall.wg_masquerade="nat" 2>/dev/null
+        || (uci -q delete firewall.wg_masquerade;
+        uci set firewall.wg_masquerade="nat");
+        uci set firewall.wg_masquerade.name="Masquerade-WireGuard";
+        uci set firewall.wg_masquerade.src="wg";
+        uci set firewall.wg_masquerade.dest="wan";
+        uci set firewall.wg_masquerade.target="MASQUERADE";
+        uci set firewall.wg_masquerade.family="ipv4";
+        [ -n {{ tunnel_network | quote }} ]
+        && uci set firewall.wg_masquerade.src_ip={{ tunnel_network | quote }};
+        after="$(uci show firewall.wg_masquerade 2>/dev/null)";
+        [ "$before" = "$after" ] && echo unchanged || echo changed
+      register: firewall_nat
+      changed_when: "'changed' in firewall_nat.stdout"
+
+    - name: Write the firewall
+      ansible.builtin.raw: "uci commit firewall"
+      changed_when: true
+
+    - name: Reload the firewall
+      ansible.builtin.raw: "/etc/init.d/firewall reload"
+      changed_when: false
+
+    - name: Enable and start the portal
+      ansible.builtin.raw: "/etc/init.d/wg-portal enable; /etc/init.d/wg-portal start"
+      changed_when: true
+
+    - name: Wait for the portal to answer
+      ansible.builtin.raw: >-
+        wget -q -O /dev/null http://127.0.0.1:{{ portal_port }}/api/v0/auth/providers
+      register: portal_http
+      changed_when: false
+      until: portal_http.rc == 0
+      retries: 30
+      delay: 2
+
+    - name: Report the state of the portal
+      ansible.builtin.raw: >-
+        logread | tail -20; netstat -ltn; opkg status wg-portal
+      register: portal_state
+      changed_when: false
+
+    - name: Report the state of the portal
+      ansible.builtin.debug:
+        msg: "{{ portal_state.stdout }}"

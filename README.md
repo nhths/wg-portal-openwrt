@@ -122,12 +122,26 @@ The play checks the fingerprint of the key before it trusts it: the key has
 to be the one of the project (`4aae624e9d888fea`).
 
 The configuration of the portal, the zone of the firewall and the service are
-not in the play — they need the password of the portal, and they are below.
+in the play as well — see below.
 
 ### Configuration
 
-The package carries no configuration, so the portal needs one before the
-first start:
+The play `ansible/router.yml` does it: it writes the configuration of the
+portal when there is none yet, gives the tunnel a zone of the firewall, lets
+the peers in from the internet, masquerades the traffic of the tunnel and
+starts the service.
+
+The port of the tunnel is a variable of the play: the standard port of
+WireGuard by default, another one with `-e wireguard_port=...`. The play
+checks it against the port the portal really listens on and stops when they
+are not the same — the rule of the firewall would open a port nobody listens
+on.
+
+The portal owns the configuration of itself: the play writes it only when
+there is none, and it never touches the password of the administrator
+again.
+
+By hand, the same is:
 
 ```sh
 mkdir -p /etc/wg-portal
