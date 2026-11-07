@@ -40,7 +40,13 @@
         ansible_host: "{{ router_address }}"
         ansible_user: "{{ router_user }}"
         ansible_ssh_private_key_file: "{{ router_ssh_key if router_ssh_key else omit }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        # dropbear drops a session that gets nothing for 300 seconds, and it
+        # counts the packets it reads: the keepalive of the client is what
+        # keeps the session alive while opkg downloads the package.
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=accept-new
+          -o ServerAliveInterval=30
+          -o ServerAliveCountMax=6
       # The variable of the inventory is not there when no inventory was
       # parsed at all — the play has to work without one.
       when: "'router' not in (ansible_inventory_hostnames | default({}))"
@@ -103,9 +109,19 @@
       changed_when: false
 
     - name: Point opkg at the feed of the portal
+      # The firmware of the router ships /etc/opkg/customfeeds.conf full of
+      # null bytes, and opkg does not read such a file: the feed of the
+      # portal stays invisible to it, and opkg answers "Cannot install
+      # package". The nulls are dropped, the lines that are left are kept,
+      # and the feed is added to them.
       ansible.builtin.raw: >-
-        grep -q "^src wgp {{ feed_url }}$" /etc/opkg/customfeeds.conf 2>/dev/null
-        || echo "src wgp {{ feed_url }}" >> /etc/opkg/customfeeds.conf
+        [ -f /etc/opkg/customfeeds.conf ]
+        && tr -d "\000" < /etc/opkg/customfeeds.conf > /tmp/customfeeds.conf
+        || : > /tmp/customfeeds.conf;
+        grep -q "^src wgp {{ feed_url }}$" /tmp/customfeeds.conf
+        || echo "src wgp {{ feed_url }}" >> /tmp/customfeeds.conf;
+        cat /tmp/customfeeds.conf > /etc/opkg/customfeeds.conf;
+        rm -f /tmp/customfeeds.conf
       changed_when: false
 
     - name: Update the lists of opkg
