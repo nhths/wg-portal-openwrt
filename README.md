@@ -87,8 +87,17 @@ The play `ansible/router.yml` does the same on the LAN router: it fetches
 the public key of the feed, checks its fingerprint, trusts it, points opkg
 at the feed and installs the portal from it.
 
-It is a single file with no dependencies of its own — it needs nothing but
-Ansible and the access to the router. It can be piped straight from the
+It needs the collection `community.openwrt` — the same one the check of the
+package uses:
+
+```sh
+ansible-galaxy collection install -r ansible/requirements.yml
+```
+
+Its modules are ucode scripts, and the router runs them: the router has no
+Python, and it needs none.
+
+Apart from that, it is a single file — it can be piped straight from the
 mirror into Ansible, without the repository and without a file on the disk:
 
 ```sh

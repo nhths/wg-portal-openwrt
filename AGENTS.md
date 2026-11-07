@@ -457,8 +457,17 @@ public key of the feed, checks its fingerprint, trusts it with `opkg-key
 add`, points opkg at the feed and installs the portal from it. It is the
 same chain the check of the emulated guest goes through, only on the device.
 
-The play is self-contained — it needs nothing but Ansible and the access to
-the router:
+The play needs the community.openwrt collection — the same one the check of the
+guest uses:
+
+```sh
+ansible-galaxy collection install -r ansible/requirements.yml
+```
+
+Its modules are ucode scripts, and the router runs them: the router has no
+Python, and it needs none — `ucode` and `rpcd` are in the firmware of it.
+
+Apart from that, the play needs nothing but the access to the router:
 
 - the public key it fetches itself, from the release;
 - the address of the router is a variable of the play (`router_address`), and
@@ -472,20 +481,14 @@ the router:
 ansible-playbook ansible/router.yml
 ```
 
-The play is a single file with no dependencies of its own, so it can be
-piped from the mirror into Ansible — the path of the playbook is
-`/dev/stdin`, `ansible-playbook -` does not read it from the pipe:
+The play is a single file, so it can be piped from the mirror into Ansible —
+the path of the playbook is `/dev/stdin`, `ansible-playbook -` does not read
+it from the pipe:
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml \
   | ansible-playbook /dev/stdin
 ```
-
-Only the modules of Ansible itself are used: the modules of the
-community.openwrt collection would need a collection that is not in Ansible,
-and the play has to work where nothing was installed for it. The router has
-no Python, so the commands run through the `raw` module — it needs no
-interpreter on the device.
 
 The firmware of the router ships `/etc/opkg/customfeeds.conf` full of null
 bytes, and opkg does not read such a file: the feed of the portal stays
