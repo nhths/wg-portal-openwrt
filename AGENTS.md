@@ -723,6 +723,21 @@ peers never answer the ping of the portal.
 The port of the rule of the wan is the port of the variables of the play,
 and it is checked against the port the portal writes for the interface.
 
+The public address of the router is the address of the services of the
+gateway, and the firewall of the router redirects the traffic of the wan
+zone to them. The traffic of the tunnel is not redirected: it is delivered
+to the router itself, and the router answers it with the certificate of its
+own web interface (uhttpd, the OpenWrt one) instead of the certificate of
+the gateway. The play copies the redirects of the wan zone for the zone of
+the tunnel — the peers reach the services of the gateway the same way the
+internet does.
+
+fw4 reflects the redirects for the lan as well: the clients of the lan reach
+the public address of the router through the gateway too, and the traffic is
+masqueraded to the lan address of the router on the way back. The reflection
+matches the network of the lan only, so the peers of the tunnel are not
+covered by it.
+
 ### The proxy of the router
 
 The router has a transparent proxy on it (podkop), and the traffic of the

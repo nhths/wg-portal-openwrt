@@ -147,6 +147,13 @@ answers them with the fake addresses of the proxy — without the tunnel in
 the list of the proxy, their traffic to those addresses is not intercepted
 and goes to the internet as it is.
 
+The public address of the router is the address of the services of the
+gateway: the firewall of the router redirects the traffic of the wan zone to
+them. The play makes the same redirects for the tunnel — otherwise the
+traffic of the peers to the public address is delivered to the router itself,
+and the router answers it with the certificate of its own web interface
+instead of the certificate of the gateway.
+
 The portal owns the configuration of itself: the play writes it only when
 there is none, and it never touches the password of the administrator
 again.

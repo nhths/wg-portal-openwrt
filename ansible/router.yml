@@ -118,6 +118,8 @@
   vars:
     portal_admin_password: ""
     portal_web_address: 0.0.0.0
+    redirect_fields: [name, dest, dest_ip, dest_port, src_dport]
+    tunnel_zone: wg
     tunnel_interface: wg0
     tunnel_config_path: /etc/wireguard
   tasks:
@@ -224,15 +226,15 @@
           - command: ensure
             config: firewall
             type: zone
-            name: wg
+            name: "{{ tunnel_zone }}"
             find:
-              name: wg
+              name: "{{ tunnel_zone }}"
             value:
               input: ACCEPT
               output: ACCEPT
               forward: ACCEPT
           - command: add_list
-            key: firewall.wg.device
+            key: "firewall.{{ tunnel_zone }}.device"
             value: "{{ tunnel_interface }}"
             unique: true
 
@@ -277,6 +279,66 @@
               proto: udp
               dest_port: "{{ wireguard_port }}"
               target: ACCEPT
+
+    - name: Find the redirects of the wan zone
+      community.openwrt.uci:
+        command: find_all
+        config: firewall
+        type: redirect
+        find:
+          src: wan
+      register: wan_redirects
+      changed_when: false
+      failed_when: false
+
+    - name: Read the redirects of the wan zone
+      # "uci get" of a section returns the type of it, not its options, so the
+      # options of every redirect are read one by one.
+      community.openwrt.uci:
+        command: get
+        config: firewall
+        section: "{{ item.0 }}"
+        option: "{{ item.1 }}"
+      register: redirect_options
+      loop: >-
+        {{ wan_redirects.result_list | default([])
+        | product(redirect_fields) | list }}
+      changed_when: false
+      failed_when: false
+
+    - name: Take the redirects of the wan zone
+      ansible.builtin.set_fact:
+        public_redirects: "{{ public_redirects | default([]) + [dict(redirect_fields | zip(item))] }}"
+      loop: >-
+        {{ redirect_options.results | default([]) | map(attribute='result') | list
+        | batch(redirect_fields | length) | list }}
+
+    - name: Let the tunnel reach the services of the public address
+      # The public address of the router is the address of the services of the
+      # gateway. fw4 redirects the traffic of the wan zone to them, and
+      # reflects it for the lan, but the traffic of the tunnel is delivered to
+      # the router itself: the router answers it with the certificate of its
+      # own web interface. The same redirects for the tunnel zone fix that.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: redirect
+            name: "{{ item.name }}_{{ tunnel_zone }}"
+            find:
+              name: "{{ item.name }}_{{ tunnel_zone }}"
+            value:
+              name: "{{ item.name }}_{{ tunnel_zone }}"
+              src: "{{ tunnel_zone }}"
+              dest: "{{ item.dest }}"
+              dest_ip: "{{ item.dest_ip }}"
+              dest_port: "{{ item.dest_port }}"
+              src_dport: "{{ item.src_dport }}"
+              target: DNAT
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
 
     - name: Masquerade the traffic that leaves to the internet
       # The zone of the wan masquerades the traffic that leaves through it. A
