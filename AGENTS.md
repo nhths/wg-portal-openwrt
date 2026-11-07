@@ -465,12 +465,18 @@ and the play has to work where nothing was installed for it. The router has
 no Python, so the commands run through the `raw` module — it needs no
 interpreter on the device.
 
-The session of dropbear needs the keepalive of the client. dropbear drops a
-session that receives nothing for 300 seconds (`-K 300`), and it counts the
-packets it reads — Ansible sends nothing while a command runs, so the
-session dies in the middle of the download of the package or of the update
-of the lists. The `ServerAliveInterval` of the ssh settings is what keeps
-it alive.
+The firmware of the router ships `/etc/opkg/customfeeds.conf` full of null
+bytes, and opkg does not read such a file: the feed of the portal stays
+invisible to it, and opkg answers "Cannot install package wg-portal". The
+play drops the nulls before it adds the feed to the file. The same was
+checked on the emulated guest — its `customfeeds.conf` is a normal file,
+which is why the check of the feed passed there and the install of the
+package did not happen on the router.
+
+The session of dropbear needs the keepalive of the client as well: it drops
+a session that receives nothing for 300 seconds (`-K 300`), and it counts the
+packets it reads. The `ServerAliveInterval` of the ssh settings keeps the
+session alive while the package is downloaded.
 
 The configuration of the portal, the zone of the firewall and the service are
 not in the play — they need the password of the portal.
