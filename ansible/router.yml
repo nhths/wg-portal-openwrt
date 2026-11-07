@@ -114,14 +114,22 @@
       # portal stays invisible to it, and opkg answers "Cannot install
       # package". The nulls are dropped, the lines that are left are kept,
       # and the feed is added to them.
+      #
+      # The source is declared as "src/gz", the way the feeds of the firmware
+      # are declared: opkg takes the index of it compressed then, and stores
+      # it compressed. LuCI reads the indexes of the feeds with "gzip -cd",
+      # and it skips the ones that are not compressed — with a plain index
+      # the portal shows up in the list of the installed packages without a
+      # size and without a description.
       ansible.builtin.raw: >-
         [ -f /etc/opkg/customfeeds.conf ]
         && tr -d "\000" < /etc/opkg/customfeeds.conf > /tmp/customfeeds.conf
         || : > /tmp/customfeeds.conf;
-        grep -q "^src wgp {{ feed_url }}$" /tmp/customfeeds.conf
-        || echo "src wgp {{ feed_url }}" >> /tmp/customfeeds.conf;
-        cat /tmp/customfeeds.conf > /etc/opkg/customfeeds.conf;
-        rm -f /tmp/customfeeds.conf
+        grep -v "^src.* wgp {{ feed_url }}$" /tmp/customfeeds.conf
+        > /tmp/customfeeds.new || :;
+        echo "src/gz wgp {{ feed_url }}" >> /tmp/customfeeds.new;
+        cat /tmp/customfeeds.new > /etc/opkg/customfeeds.conf;
+        rm -f /tmp/customfeeds.conf /tmp/customfeeds.new
       changed_when: false
 
     - name: Update the lists of opkg

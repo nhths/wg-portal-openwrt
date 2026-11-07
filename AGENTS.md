@@ -373,6 +373,26 @@ The control part of it is the control file of the package itself, so the
 index cannot disagree with the package; `scripts/make-feed.sh` adds the three
 fields that opkg needs and opkg does not take from the package.
 
+The index is published twice: as it is (`Packages`) and compressed
+(`Packages.gz`). The compressed one is not a nicety — LuCI reads the indexes
+of the feeds with `gzip -cd` (`/usr/libexec/package-manager-call
+list-available`), and that skips the files which are not compressed: with a
+plain index only, the package is invisible to LuCI, and it shows up in the
+list of the installed packages without a size and without a description.
+
+opkg takes the compressed index only when the source is declared as `src/gz`
+— the name of the source tells opkg which file to take (`libopkg/opkg.c`:
+
+```c
+sprintf_alloc(&url, "%s/%s", src->value, src->gzip ? "Packages.gz" : "Packages");
+```
+
+The feeds of the firmware are declared that way in
+`/etc/opkg/distfeeds.conf`, so a plain `src` line makes opkg fetch the plain
+index, store it uncompressed, and leave LuCI with nothing to read. The
+signature is over the plain index — it is checked against the index after it
+is unpacked — so it does not change.
+
 ### The signature
 
 The signature is made with **usign**, not with GPG: OpenWrt 24.10 signs its
@@ -416,12 +436,12 @@ the portal come from one, the kernel modules from the other.
 
 ### The feed of the release
 
-Every release publishes three more assets next to the package: `Packages`,
-`Packages.sig` and `wg-portal.pub`. The url of the feed is the directory of
-the download of the last release:
+Every release publishes four more assets next to the package: `Packages`,
+`Packages.gz`, `Packages.sig` and `wg-portal.pub`. The url of the feed is the
+directory of the download of the last release:
 
 ```text
-src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
+src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
 ```
 
 The `Filename:` of the index carries the version, so the index is built

@@ -140,13 +140,14 @@ jobs:
             echo
             echo "### The feed"
             echo
-            echo "The release carries also the index of a feed (\`Packages\`, \`Packages.sig\` and"
-            echo "\`wg-portal.pub\`). With it the router installs and updates the package by name:"
+            echo "The release carries also the index of a feed (\`Packages\`, \`Packages.gz\`,"
+            echo "\`Packages.sig\` and \`wg-portal.pub\`). With it the router installs and updates"
+            echo "the package by name:"
             echo
             echo '```sh'
             echo "wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub"
             echo "opkg-key add /tmp/wg-portal.pub"
-            echo "echo 'src wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf"
+            echo "echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf"
             echo "opkg update"
             echo "opkg install wg-portal"
             echo '```'
@@ -185,7 +186,7 @@ jobs:
           # the public key of it. opkg takes them from the directory of the
           # url of the feed, so the names of them are fixed.
           gh release create "$version" "$ipk" dist/wg-portal.ipk \
-            dist/Packages dist/Packages.sig dist/wg-portal.pub \
+            dist/Packages dist/Packages.gz dist/Packages.sig dist/wg-portal.pub \
             --title "wg-portal $version for OpenWrt (aarch64_cortex-a53)" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
@@ -197,6 +198,7 @@ jobs:
           path: |
             dist/*.ipk
             dist/Packages
+            dist/Packages.gz
             dist/Packages.sig
             dist/wg-portal.pub
 

@@ -44,7 +44,7 @@
   # kmod-wireguard against the index of that feed.
   community.openwrt.copy:
     content: |
-      src wgp {{ wgp.wgp_feed_url }}
+      src/gz wgp {{ wgp.wgp_feed_url }}
       src openwrt {{ wgp.feed_url }}
     dest: /etc/opkg/customfeeds.conf
     mode: "0644"
