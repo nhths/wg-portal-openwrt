@@ -10,10 +10,6 @@
 # the right to open a raw socket — the ping of the client needs it, and podman
 # does not give it by default.
 
-# The usign of OpenWrt: the tool that signs the feeds of opkg. It is a build
-# of OpenWrt for musl, so it comes with its own loader and libraries.
-FROM wg-portal-usign AS usign
-
 FROM debian:bookworm-slim
 
 RUN apt-get update \
@@ -49,18 +45,14 @@ ENV ANSIBLE_CONFIG=/opt/wg-portal/ansible/ansible.cfg
 ENV ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
 ENV ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote
 
-# The usign of OpenWrt, with its loader and its libraries: the check signs
-# the index of the feed of the portal with a throwaway key. The libraries are
-# in the image of the usign itself (in /opt/usign/lib) — a wildcard in the
-# source of a COPY is a Docker thing, podman does not do it.
-COPY --from=usign /lib/ld-musl-x86_64.so.1 /lib/ld-musl-x86_64.so.1
-COPY --from=usign /opt/usign /opt/usign
-RUN printf '#!/bin/sh\nexec /lib/ld-musl-x86_64.so.1 --library-path /opt/usign/lib /opt/usign/usign "$@"\n' > /usr/local/bin/usign \
- && chmod 755 /usr/local/bin/usign
-
 COPY ansible/ /opt/wg-portal/ansible/
 COPY scripts/ /opt/wg-portal/scripts/
 COPY templates/ /opt/wg-portal/templates/
+# The keys of the feed of the portal: the guest is given the public one, it
+# trusts the index of the feed signed with it.
+COPY keys/ /opt/wg-portal/keys/
+# The package of the portal and the index of the feed of it, signed: the check
+# serves them to the guest the way the router of the LAN gets them.
 COPY dist/ /opt/wg-portal/dist/
 
 # The OpenWrt guest: the rootfs, the kernel and the kernel modules. They are

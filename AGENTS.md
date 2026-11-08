@@ -14,19 +14,20 @@ to build it. This file is everything else.
   and every file can be read on its own. The router is configured by
   Ansible (it renders the templates on the controller), the package by the
   script that builds it.
-- The packaging is a script (`scripts/build-ipk.sh`), not a play.
+- The packaging is a script (`scripts/build-apk.sh`), not a play.
 - The real router is only ever touched through the play `ansible/router.yml`
   — never by hand over ssh. Everything else runs in the emulated guest. The
   play is written for the user, who runs it, and it was run against the
   router on the user's request: the firewall of the tunnel, the configuration
   of the portal and the service.
 - Everything in the repository is in English.
-- `ARCH` is the exact value of `opkg print-architecture` on the router
-  (`aarch64_cortex-a53`); opkg refuses the package otherwise.
+- `ARCH` is the exact value of the architecture of the router
+  (`aarch64_cortex-a53`); apk refuses the package otherwise.
 - The build artifacts are not tracked — see `.gitignore`.
 - The secret key of the feed of the portal is never in the repository: only
-  the public half is (`keys/wg-portal.pub`). The secret half is in the
-  secrets of the CI and in `~/.config/wg-portal/secret.key` locally.
+  the public half is (`keys/wg-portal.pem`). The secret half is in the
+  secrets of the CI (`APK_SECRET_KEY`) and in `~/.config/wg-portal/secret.pem`
+  locally.
 
 ## The layout
 
@@ -36,14 +37,13 @@ AGENTS.md                    this file
 Makefile                     the entry points
 Dockerfile                   the image of the WireGuard check
 Dockerfile.builder           the image that builds wg-portal from source
-Dockerfile.pkg               the toolbox of the package: UPX, tar, Jinja2
-Dockerfile.usign             the image with the usign of OpenWrt: it signs the
-                             feed of the portal
+Dockerfile.pkg               the toolbox of the package: UPX, the apk-tools,
+                             Jinja2
 .github/workflows/
   wg-portal-release.yml      the workflow of the release: the portal is checked
                              for updates every two weeks
 keys/
-  wg-portal.pub              the public key of the feed of the portal
+  wg-portal.pem              the public key of the feed of the portal
 ansible/
   site.yml                   the OpenWrt setup of the emulated router
   router.yml                 the feed of the portal on the real router
@@ -56,11 +56,11 @@ ansible/
   roles/tunnel/tasks/        the guest side of the check
   roles/package/tasks/       the checks of the installation of the package
 templates/
-  ipk/                       the files of the package: control, init script,
-                             postinst, prerm
+  apk/                       the files of the package: the metadata, the init
+                             script, the scripts of the package
   openwrt/                   the network of the guest, the config of the portal
 scripts/
-  build-ipk.sh               download → UPX → build the .ipk
+  build-apk.sh               download → UPX → build the .apk
   build-src.sh               build wg-portal from source and compare sizes
   check.sh                   the checks: the package, the WireGuard tunnel
   guest.sh                   the emulated router: fetch, boot, flash
@@ -75,10 +75,10 @@ wg-portal-upx-ipk-bench.md   the original task brief
 ## The targets
 
 ```sh
-make dist           # download, pack with UPX, build the .ipk
+make dist           # download, pack with UPX, build the .apk and sign it
 make feed           # the index of the feed of the portal and the signature of it
 make bench          # measure size, startup time and RAM in an emulated guest
-make check-install  # install the .ipk in a guest OpenWrt and start it
+make check-install  # install the .apk in a guest OpenWrt and start it
 make image          # build the image of the WireGuard check
 make check-wireguard # check a real WireGuard tunnel in that image
 make build-src      # build wg-portal from source and compare the sizes
@@ -90,39 +90,57 @@ Docker with network access is required. The measurements and the checks need
 device) and `ethtool`.
 
 The variables of the Makefile: `VER` (the version of the portal, `v2.3.1`),
-`ARCH` (`aarch64_cortex-a53`), `REL` (the revision of the package, `1`),
-`IMAGE`, `PKG_IMAGE`, `USIGN_IMAGE`, `TAG`, `DOCKER` (`docker` or `podman`),
-`PUBLIC_KEY` (the public key of the feed) and `SECRET_KEY` (the secret half
-of it).
+`PKG_REV` (the fourth number of the version of the package, `1`), `ARCH`
+(`aarch64_cortex-a53`), `IMAGE`, `PKG_IMAGE`, `TAG`, `DOCKER` (`docker` or
+`podman`) and `SECRET_KEY` (the secret half of the key of the feed).
 
 ## The build of the package
 
 `make dist` builds the toolbox image (`Dockerfile.pkg`) and runs it:
-`scripts/build-ipk.sh` downloads the release binary of the portal, packs it
-with UPX, renders the files of the package from `templates/ipk/` and
-assembles the `.ipk`.
+`scripts/build-apk.sh` downloads the release binary of the portal, packs it
+with UPX, renders the files of the package from `templates/apk/` and
+assembles the `.apk` with `apk mkpkg`.
 
 The toolbox is Debian, because the busybox tar of Alpine does not know the
 options the package needs (`--numeric-owner`, `--owner`, `--group`).
 
-The structure of the package is verified: an outer archive of
-`debian-binary`, `control.tar.gz`, `data.tar.gz`; `control` carries
-`Architecture: aarch64_cortex-a53` and `Depends: kmod-wireguard`; `data`
-carries `usr/bin/wg-portal` (755) and `etc/init.d/wg-portal` (755).
+The apk-tools are taken from the ready-made package of Alpine: the static
+build, 3.0.9. The format of the packages and of the indexes is the one of
+apk 3.0.x — the same the OpenWrt 25.12 uses (3.0.5); the header of the
+schema (`apk_adb.h`) is byte for byte the same in both, the differences
+between them are in the checks of the values.
 
-The package is 9.9 MB — that is what it takes of the 128 MB of the flash of
-the router.
+The package carries the metadata of the package (`templates/apk/metadata.j2`:
+the name, the version, the architecture, the description, the license, the
+maintainer, the url, the origin and the dependency on `kmod-wireguard`), the
+binary in `usr/bin/wg-portal` (755), the init script in `etc/init.d/`
+(755) and the list of the files in `lib/apk/packages/wg-portal.list` — the
+list OpenWrt reads in the scripts of the packages.
 
-`Installed-Size` in `control` is counted in bytes (`du -sb`) — the same as in
-the stock OpenWrt packages: opkg converts the value to KiB itself
-(`pkg_size_kbs = (installed_size + 1023) / 1024`), so the Debian habit of
-"kilobytes" does not apply here.
+The scripts of the package are the ones of OpenWrt: `post-install` and
+`post-upgrade` enable the service, `pre-deinstall` stops it and disables it.
+The service is enabled but not started: the package carries no configuration
+of the portal, and it cannot run before it is written.
 
-The container of the toolbox writes into `dist/` as the user of the host, so
-the id of the host has to be kept inside it. Rootless podman maps the ids
-of the users its own way and needs `--userns=keep-id` for that; the root of
-the host is mapped to itself anyway, and the runner of the CI builds with
-podman as root. The Makefile adds the flag when it is needed and only then.
+**The package is signed.** apk refuses to install a package whose signature
+it cannot check, and it refuses to build an index from one either — so the
+secret key of the project is needed to build the package at all
+(`apk mkpkg --sign-key`). The secret half is not in the repository: it is in
+the secrets of the CI (`APK_SECRET_KEY`) and in `~/.config/wg-portal/secret.pem`
+locally.
+
+The container of the toolbox runs as **root**, and it has to: the files of
+the package belong to root, as the files of every package of OpenWrt do
+(`a:0:0:755` in the database of the firmware). A package built by a user
+records `nobody:nobody` instead — apk knows no name for the uid of the
+builder.
+
+The artifacts of the build in `dist/` belong to the user of the host: the
+container gets the ids of it (`HOST_UID`, `HOST_GID`) and gives the files
+back to it at the end. Rootless podman maps the ids of the users its own
+way and needs `--userns=keep-id` for that; the root of the host is mapped
+to itself anyway, and the runner of the CI builds with podman as root. The
+Makefile adds the flag when it is needed and only then.
 
 The configuration of the portal is not in the package: the init script points
 the binary at `/etc/wg-portal/config.yaml`, and the file has to be written on
@@ -130,7 +148,7 @@ the router. The keys of it are the sections of the configuration of the
 portal — `core.admin_password`, `web.listening_address` and `database.dsn`
 (the same names the environment variables `WG_PORTAL_CORE_ADMIN_PASSWORD` and
 friends are built from). If the file should not be required at all, drop the
-`procd_set_param env` line in `templates/ipk/init.d.j2`.
+`procd_set_param env` line in `templates/apk/init.d.j2`.
 
 ## The compression
 
@@ -239,7 +257,7 @@ and ~9 MB after.
 
 ## The emulated router
 
-Both checks run the same machine: the stock OpenWrt 24.10.8 arm64 rootfs on
+Both checks run the same machine: the stock OpenWrt 25.12.6 arm64 rootfs on
 a 128 MB ext4 flash with 512 MB of RAM — exactly the resources of the real
 router (RouteRich AX3000 v1: 128 MB of flash, 512 MB of RAM). The measured
 memory of the packed binary is therefore the memory it takes on the router.
@@ -258,7 +276,9 @@ into the flash, because Ansible needs them to get in at all:
 
 The WireGuard modules come from the OpenWrt repository, not from the image:
 `kmod-wireguard`, the crypto modules it needs and `kmod-udptunnel4` /
-`kmod-udptunnel6`.
+`kmod-udptunnel6`. Their feed is the index of apk v3 (`packages.adb`), signed
+with the key of the firmware — the guest trusts that key out of the box
+(`/etc/apk/keys/openwrt-25.12.pem` of the rootfs).
 
 The measurements need a real guest kernel: under `qemu-user` the call
 `socket(AF_NETLINK, …, NETLINK_GENERIC)` returns `EPROTONOSUPPORT`, so
@@ -287,7 +307,7 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags verify \
 
 - `net` writes `/etc/config/network` into the rootfs of the guest, on the
   controller — the router is not up yet.
-- `setup` installs the `.ipk` of the portal with opkg, loads the WireGuard
+- `setup` installs the `.apk` of the portal with apk, loads the WireGuard
   modules, writes `/etc/wg-portal/config.yaml` and starts the service.
 - `verify` waits for the traffic in the tunnel and pings the client back
   from the guest.
@@ -306,132 +326,140 @@ the result to the guest.
 ## The dependency of the portal
 
 The portal depends on `kmod-wireguard`, and the check does not install that
-module by hand: opkg has to resolve the dependency itself, the way it does
+module by hand: apk has to resolve the dependency itself, the way it does
 on the router. The modules come from a feed — the index of the OpenWrt
-repository with its signature, and the packages themselves — which the host
-serves over HTTP to the guest:
-
-```text
-Installing wg-portal (2.3.1-1) to root...
-Installing kmod-crypto-lib-chacha20 (6.6.144-r1) to root...
-Downloading http://10.77.0.1:18080/kmod-crypto-lib-chacha20_6.6.144-r1_aarch64_generic.ipk
-...
-Installing kmod-wireguard (6.6.144-r1) to root...
-Downloading http://10.77.0.1:18080/kmod-wireguard_6.6.144-r1_aarch64_generic.ipk
-```
-
-The index is signed by the build of the firmware, and the guest checks the
-signature against the keys it has (`/etc/opkg/keys`) — the check of the
-signature passes. The feeds of the firmware are dropped: the guest has no
-internet, the feed of the check is the only one it can reach.
+repository, signed with the key of the firmware, and the packages themselves
+— which the host serves over HTTP to the guest.
 
 The feed of the check serves the whole chain of the dependencies of
-`kmod-wireguard` (6.6.144-r1): `kmod-crypto-lib-curve25519`,
+`kmod-wireguard`: `kmod-crypto-lib-curve25519`,
 `kmod-crypto-lib-chacha20poly1305`, `kmod-crypto-lib-chacha20`,
-`kmod-crypto-lib-poly1305`, `kmod-crypto-kpp`, `kmod-udptunnel4` and
-`kmod-udptunnel6` — opkg downloads the ones it needs by itself.
+`kmod-crypto-lib-poly1305`, `kmod-crypto-hash`, `kmod-crypto-kpp`,
+`kmod-udptunnel4` and `kmod-udptunnel6` — apk downloads the ones it needs by
+itself. The versions of them are taken from `index.json` of the feed, and
+the name of a package of apk v3 is its name and its version:
+`kmod-wireguard-6.12.112-r1.apk`.
 
-### The quirks of opkg
+The install of the portal looks like this in the log of the check:
 
-- opkg knows no `file://` url: the feed has to be served over HTTP.
-- The url of the feed is a **directory**: opkg appends `/Packages` and
-  `/Packages.sig` to it.
-- The architecture list comes from the `arch <name> <priority>` lines in
-  `/etc/opkg.conf`, not from `/etc/opkg/arch.conf` (there is no such file in
-  the OpenWrt image). As soon as `opkg.conf` contains a single such line, the
-  default list `[all, noarch, <build arch>]` is *not* added — write the whole
-  list.
-- When opkg prints "Packages for X found, but incompatible with the
-  architectures configured", the architecture is not the problem: opkg drops
-  a candidate whose dependencies cannot be resolved
-  (`pkg_hash_check_unresolved`) and the message about the architectures is
-  misleading. The culprit is an unresolvable `Depends:`.
-- The `openwrt/rootfs` container is useless for the install check: its opkg
-  does not install local `.ipk` files at all — a genuine package from the
-  OpenWrt repository (`464xlat_13_aarch64_generic.ipk`) fails the same way.
-  The install check runs in a guest with a real OpenWrt root instead.
+```text
+(1/9) Installing kmod-crypto-lib-chacha20 (6.12.112-r1)
+  Executing kmod-crypto-lib-chacha20-6.12.112-r1.post-install
+...
+(8/9) Installing kmod-wireguard (6.12.112-r1)
+  Executing kmod-wireguard-6.12.112-r1.post-install
+(9/9) Installing wg-portal (2.3.1.1)
+  Executing wg-portal-2.3.1.1.post-install
+OK: 24.6 MiB in 214 packages
+```
+
+### The quirks of apk
+
+- The url of a feed is the url of its **index**: a url that ends with
+  `.adb` is taken as it is, and the packages of the feed are taken from the
+  same directory by their name. A url that does not end with `.adb` is the
+  url of a v2 repository, and apk looks for `APKINDEX.tar.gz` in it.
+- The architecture list comes from `/etc/apk/arch` — one architecture per
+  line. The guest is `aarch64_generic` and the package is built for
+  `aarch64_cortex-a53` (the architecture of the router), so the role writes
+  both of them into the file.
+- A package whose signature apk cannot check is not installed at all, and
+  an index cannot be built from one either. The signature is inside the
+  file, and the key it is made with is identified by its id — the first 16
+  bytes of the sha512 of the public point of the key.
+- `apk add` does not upgrade a package that is installed already: it says
+  nothing and keeps the old version. The upgrade is `apk upgrade <name>`,
+  and it prints what it did: `(1/1) Upgrading wg-portal (2.3.1.1 ->
+  2.3.1.2)`. The module `community.openwrt.apk` does not upgrade either —
+  it asks apk about the package first and does nothing when it is there.
+- The scripts of a package are run by apk with an environment of its own,
+  and nothing else:
+
+  ```text
+  APK_PACKAGE=wg-portal
+  APK_SCRIPT=post-install
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin
+  PWD=/
+  ```
+
+  `IPKG_INSTROOT` — the variable of opkg, the one the scripts of OpenWrt
+  use — is **not** set by apk: it is empty on the device.
+- OpenWrt has its own hooks for its packages: `default_postinst` and
+  `default_prerm` in `/lib/functions.sh`. They find the init scripts of the
+  package in `/lib/apk/packages/<name>.list`, and `default_postinst`
+  enables **and starts** them. The portal is not one of them: it needs the
+  configuration of it, which is written on the router. The package has
+  hooks of its own — they enable the service and do not start it.
 
 ## The feed of the portal
 
-A package installed by its url is in no feed, so opkg cannot update it: it
+A package installed by its url is in no feed, so apk cannot update it: it
 knows the version that is installed and nothing else. The feed is what makes
-the update possible — it is the index of the packages, the signature of the
-index and the packages themselves.
+the update possible — it is the index of the packages and the packages
+themselves.
 
-The index (`Packages`) is a list of stanzas, one per package:
+The index of a feed of apk v3 is `packages.adb` — the database of apk, in
+the binary format of ADB. It is built by apk itself (`apk mkndx`), and it
+carries the metadata of every package of the feed. `apk adbdump` prints it
+in a readable form:
 
 ```text
-Package: wg-portal
-Version: 2.3.1-1
-Depends: kmod-wireguard
-Section: net
-Architecture: aarch64_cortex-a53
-...
-Filename: wg-portal_2.3.1-1_aarch64_cortex-a53.ipk
-Size: 10403328
-SHA256sum: ...
+#%SCHEMA: 78646E69
+# ADB block, size: 212, compat: 0, ver: 0
+description: the feed of the portal for the router of the LAN
+packages: # 1 items
+  - name: wg-portal
+    version: 2.3.1.1
+    hashes: ...
+    description: WireGuard Portal - web UI for WireGuard
+    arch: aarch64_cortex-a53
+    license: MIT
+    origin: https://github.com/h44z/wg-portal
+    depends: kmod-wireguard
+    installed-size: ...
+# sig v00 h04 ...: OK
 ```
 
-The control part of it is the control file of the package itself, so the
-index cannot disagree with the package; `scripts/make-feed.sh` adds the three
-fields that opkg needs and opkg does not take from the package.
+The last line is the signature of the index: `OK` means that it is made with
+a key the reader trusts.
 
-The index is published twice: as it is (`Packages`) and compressed
-(`Packages.gz`). The compressed one is not a nicety — LuCI reads the indexes
-of the feeds with `gzip -cd` (`/usr/libexec/package-manager-call
-list-available`), and that skips the files which are not compressed: with a
-plain index only, the package is invisible to LuCI, and it shows up in the
-list of the installed packages without a size and without a description.
-
-opkg takes the compressed index only when the source is declared as `src/gz`
-— the name of the source tells opkg which file to take (`libopkg/opkg.c`:
-
-```c
-sprintf_alloc(&url, "%s/%s", src->value, src->gzip ? "Packages.gz" : "Packages");
-```
-
-The feeds of the firmware are declared that way in
-`/etc/opkg/distfeeds.conf`, so a plain `src` line makes opkg fetch the plain
-index, store it uncompressed, and leave LuCI with nothing to read. The
-signature is over the plain index — it is checked against the index after it
-is unpacked — so it does not change.
+The index is built from the package that is already signed: apk refuses to
+index a package whose signature it cannot check, and the keys of the feed
+are the ones it checks it against (`--keys-dir`).
 
 ### The signature
 
-The signature is made with **usign**, not with GPG: OpenWrt 24.10 signs its
-feeds with usign, and its opkg checks `Packages.sig` against the keys in
-`/etc/opkg/keys` — a feed whose signature does not match is dropped. The
-public key of the project is in the repository ([keys/wg-portal.pub](keys/wg-portal.pub)),
-its fingerprint is `4aae624e9d888fea`. The secret half is not in the
-repository: it is in the secrets of the CI (`OPKG_SECRET_KEY`) and, for the
-local runs, in `~/.config/wg-portal/secret.key`.
+The signature is made with the key of the project — an EC key of the curve
+P-256, the same kind the firmware of OpenWrt signs its own feeds with. The
+public key is in the repository
+([keys/wg-portal.pem](keys/wg-portal.pem)), the secret half is not: it is in
+the secrets of the CI (`APK_SECRET_KEY`) and, for the local runs, in
+`~/.config/wg-portal/secret.pem`.
+
+The id of the key — the fingerprint of it, the one apk puts into the
+signature — is `fae55c35045ee540348110e6d6487953`. It is the first 16 bytes
+of the sha512 of the public point of the key, not of the file of it:
+
+```sh
+openssl pkey -pubin -in keys/wg-portal.pem -outform DER | tail -c 65 | sha512sum | cut -c1-32
+```
 
 ```sh
 make feed                       # the index and the signature of it
-make feed SECRET_KEY=/somewhere/secret.key
+make feed SECRET_KEY=/somewhere/secret.pem
 ```
 
-The signing is done by the usign of OpenWrt — the packaged binary for
-x86_64 (`Dockerfile.usign`), a build for musl, so it needs the loader and the
-libraries of Alpine. The image of the check copies them into Debian together
-with a wrapper (`/usr/local/bin/usign`).
-
-The check of the signature is `usign -V -p <public key> -x <signature>
--m <index>`: it prints `OK` when the index is signed with the key.
+The signing is done by the apk-tools of the toolbox image: the index is
+signed while it is built (`apk mkndx --sign-key`), there is no separate step
+for it.
 
 ### The feed of the check
 
-The check does not use the key of the project: it generates a throwaway key
-pair of its own (`usign -G -p ... -s ...`) and signs its feed with it. The
-guest is given the public half of that key (`opkg-key add`), so the whole
-chain is proved without a secret anywhere:
-
-```text
-Downloading http://10.77.0.1:18081/Packages
-Downloading http://10.77.0.1:18081/Packages.sig
-Signature check passed.
-Installing wg-portal (2.3.1-1) to root...
-```
+The check serves the feed of the project itself: the index and the package
+are the ones of the release (`make feed` builds them), and the guest is
+given the public key of the project. The chain the check proves is the
+chain the router of the LAN goes through — the same index, the same key,
+the same signature.
 
 The check serves the feed on the second port (18081), next to the port of
 the feed of the firmware (18080): the guest has two feeds, the packages of
@@ -439,24 +467,26 @@ the portal come from one, the kernel modules from the other.
 
 ### The feed of the release
 
-Every release publishes four more assets next to the package: `Packages`,
-`Packages.gz`, `Packages.sig` and `wg-portal.pub`. The url of the feed is the
-directory of the download of the last release:
+Every release publishes the index of the feed next to the package:
+`packages.adb` and `wg-portal.pem`. The url of the feed is the url of the
+index:
 
 ```text
-src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download
+https://github.com/nhths/wg-portal-openwrt/releases/latest/download/packages.adb
 ```
 
-The `Filename:` of the index carries the version, so the index is built
-again for every release; the assets of the older releases stay where they
-are, but `latest` points at the newest one.
+The name of the package carries the version — apk takes it from the name and
+the version of the package in the index — so the asset of the release is
+`wg-portal-2.3.1.1.apk`, and the url of it is the url of the feed with the
+name of the package at the end.
 
 ### The play for the router
 
 `ansible/router.yml` installs the feed on the real router: it fetches the
-public key of the feed, checks its fingerprint, trusts it with `opkg-key
-add`, points opkg at the feed and installs the portal from it. It is the
-same chain the check of the emulated guest goes through, only on the device.
+public key of the feed, checks it, trusts it with the module
+`community.openwrt.apk_feed` and installs the portal from it with
+`community.openwrt.apk`. It is the same chain the check of the emulated guest
+goes through, only on the device.
 
 The play needs the community.openwrt collection — the same one the check of the
 guest uses:
@@ -494,13 +524,9 @@ curl -sSLo ansible/vars/router.yml https://raw.githubusercontent.com/nhths/wg-po
 ansible-playbook ansible/router.yml
 ```
 
-The firmware of the router ships `/etc/opkg/customfeeds.conf` full of null
-bytes, and opkg does not read such a file: the feed of the portal stays
-invisible to it, and opkg answers "Cannot install package wg-portal". The
-play drops the nulls before it adds the feed to the file. The same was
-checked on the emulated guest — its `customfeeds.conf` is a normal file,
-which is why the check of the feed passed there and the install of the
-package did not happen on the router.
+The key of the feed is checked before it is trusted: the sha256 of it has to
+be the one of the project
+(`c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443`).
 
 The session of dropbear needs the keepalive of the client as well: it drops
 a session that receives nothing for 300 seconds (`-K 300`), and it counts the
@@ -530,7 +556,7 @@ checked — the file of the repository and the play piped from the mirror.
 
 `scripts/check.sh` boots the emulated router and has two modes:
 
-- `install` — the package: the files opkg made of it, the service it enabled,
+- `install` — the package: the files apk made of it, the service it enabled,
   the binary that answers HTTP, and that the package can be taken away again
   and installed once more.
 - `wireguard` — the whole chain: the portal manages a real WireGuard server
@@ -542,27 +568,31 @@ checked — the file of the repository and the play piped from the mirror.
 make check-wireguard           # the same, but in the image of the check
 ```
 
-The install check prints what opkg made of the package:
+The install check prints what apk made of the package:
 
 ```text
-=== install wg-portal_2.3.1-1_aarch64_cortex-a53.ipk
-Installing wg-portal (2.3.1-1) to root...
-Configuring wg-portal.
---- installed files:
--rwxr-xr-x 1 root root       333 /etc/init.d/wg-portal
--rwxr-xr-x 1 root root 10371636 /usr/bin/wg-portal
---- rc.d:
-S99wg-portal -> ../init.d/wg-portal
---- status:
-Package: wg-portal
-Version: 2.3.1-1
-Depends: kmod-wireguard
-Status: install user installed
-Architecture: aarch64_cortex-a53
+wg-portal-2.3.1.1 description:
+WireGuard Portal - web UI for WireGuard
+
+wg-portal-2.3.1.1 installed size:
+9 MiB
+
+wg-portal-2.3.1.1 contains:
+etc/init.d/wg-portal
+lib/apk/packages/wg-portal.list
+usr/bin/wg-portal
+
+lrwxrwxrwx 1 root root 19 Nov  8 12:52 K01wg-portal -> ../init.d/wg-portal
+lrwxrwxrwx 1 root root 19 Nov  8 12:52 S99wg-portal -> ../init.d/wg-portal
 ```
 
-After the install the packaged binary answers HTTP (`HTTP_OK`, RSS ~47.7 MB),
-and `opkg remove` takes the package away again.
+After the install the packaged binary answers HTTP (the RSS of it is ~46 MB,
+the HWM ~50 MB — the packed binary, see "The compression"), and `apk del
+wg-portal` takes the package away again. The check installs it once more
+after that.
+
+The `K01` link is made by apk itself, the `S99` one by the init script of the
+package (`START=99`).
 
 ### The image of the check
 
@@ -584,21 +614,14 @@ which opens a raw socket — docker gives the capability by default, podman
 does not, and without it the ping fails with "ping: Operation not permitted"
 on the standard error, where the log of the check does not show it. The image
 brings QEMU, the WireGuard tools, the guest (the rootfs, the kernel and the
-kernel modules) and Ansible with the collection — the check itself needs no
-network.
+kernel modules), the keys of the feed, the package and the index of the feed
+— and Ansible with the collection. The check itself needs no network.
 
 The tun device is a device of the machine the container runs on: the `tun`
 module has to be loaded there (`modprobe tun`). The runner of the group does
 not have it yet, so the check job of the pipeline fails there with
 `stat /dev/net/tun: no such file or directory` — that is why the job is
 manual: the build job stays the blocking one.
-
-The image is built with podman on the runner and with docker on a developer
-machine, and podman does not expand the wildcards in the source of a `COPY`
-(`COPY --from=usign /usr/lib/libubox.so. …` fails there with "no such file
-or directory"). Everything the image of the check needs from the image of
-the usign is copied by its exact path — the libraries of the usign are put
-into `/opt/usign/lib` in the image of the usign itself.
 
 ### The network of the check
 
@@ -842,31 +865,37 @@ the portal to its peers fails for that reason.
 two weeks (the 1st and the 15th of the month) it looks for a new release of
 the portal (`h44z/wg-portal`). If there is one, it builds the package, checks
 it in the emulated OpenWrt — the same check as `make check-wireguard` — and
-publishes the `.ipk` as a release of the repository.
+publishes the `.apk` as a release of the repository.
 
 The state of the workflow is the release itself: if the version of the portal
 is already released here, the run does nothing. The run can also be started
 by hand (`workflow_dispatch`), with the version of the portal as the
 argument.
 
-The release carries the package twice — under its own name (the convention of
-opkg) and under the name `wg-portal.ipk`, which does not change from release
-to release, so the url of it stays the same:
+The tag of the release is the version of the package — the three numbers of
+the version of the portal and the fourth one, the revision of the packaging.
+The run looks at the tag of the last release here: the three first numbers
+of it are the version of the portal, and if they are the same — the version
+of the portal is already released — the run does nothing.
+
+The name of the asset of the package carries the version:
+`wg-portal-2.3.1.1.apk`. The url of it is therefore the url of one version,
+and apk takes the version of the package from the name of the file:
 
 ```sh
-opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk
+apk add --allow-untrusted https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal-2.3.1.1.apk
 ```
 
-It carries the feed of the portal as well (see "The feed of the portal"):
-`Packages`, `Packages.sig` and `wg-portal.pub`.
+The release carries the feed of the portal as well (see "The feed of the
+portal"): the index of it (`packages.adb`) and the public key of it
+(`wg-portal.pem`).
 
-The workflow signs the index with the secret key from the secrets of the
-repository (`OPKG_SECRET_KEY`) and checks the signature against the public
-key of the repository afterwards — a secret that does not belong to that
-key fails the release. It builds the index with `make feed-index` and signs
-it with `make feed-sign`, not with `make feed`: the latter rebuilds the
-package, and the released `.ipk` would not be the one the check image has
-baked in.
+The workflow signs the package and the index with the secret key from the
+secrets of the repository (`APK_SECRET_KEY`) and checks the signature of the
+index against the public key of the repository afterwards — a secret that
+does not belong to that key fails the release. Both are built by `make dist`
+and `make feed`: the package is signed while it is built, and the index is
+signed while it is built too.
 
 The workflow runs the code of the repository it is in, so the GitHub copy of
 the project is the one the Actions run in; the GitLab repository is the source
@@ -895,7 +924,7 @@ router itself. What is known about the difference:
 - The guest is the OpenWrt build `armsr/armv8-generic`
   (`aarch64_generic`), the router is `mediatek/filogic`
   (`aarch64_cortex-a53`) — the board cannot be emulated. The kernel is the
-  same (6.6.144) and the OpenWrt release is the same.
+  same (6.12.112) and the OpenWrt release is the same.
 - The package does not create `/etc/wg-portal` and carries no configuration:
   in the guest it is Ansible that writes it. On the router the file has to be
   written by hand (see the README).
@@ -909,7 +938,7 @@ router itself. What is known about the difference:
 
 ## The caveats
 
-- The router was never touched: no `ansible`, no `opkg` on the live device.
+- The router was never touched: no `ansible`, no `apk` on the live device.
 - The key Ansible logs into the guest with is generated by the check and lives
   next to the flash of the router — a throwaway key for a throwaway guest, not
   a secret of anything.

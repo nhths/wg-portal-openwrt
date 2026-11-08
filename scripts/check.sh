@@ -9,10 +9,6 @@
 #                        configuration the portal hands out and pings through
 #                        the tunnel, and the guest pings the client back
 #
-# The openwrt/rootfs container cannot be used for this: its opkg refuses to
-# install local .ipk files at all, a genuine package from the OpenWrt
-# repository fails the same way.
-#
 # The setup of the guest is done by Ansible, with the same collection the LAN
 # router is converged with: its modules are ucode scripts, so the guest needs
 # no Python.
@@ -62,9 +58,10 @@ PIDFILE=$VM/qemu.pid
 # packages of them from the host.
 FEED_PORT=${FEED_PORT:-18080}
 WGP_FEED_PORT=${WGP_FEED_PORT:-18081}
-# The key the feed of the portal is signed with. It is a throwaway one: the
-# check needs a signed feed, not the key of the releases.
-WGP_KEY=$VM/wgp-key
+# The public key of the feed of the portal. The index of the feed is signed
+# with it, and the guest trusts it: the key is the one of the project, the
+# same the router of the LAN trusts.
+PUBKEY=${PUBKEY:-$ROOT/keys/wg-portal.pem}
 
 # The script needs root for the tap device, the WireGuard interface and the
 # flash image. Inside the image it already is.
@@ -99,9 +96,9 @@ cat > "$VM/vars.json" <<EOF
     "admin_password": "$ADMIN_PASSWORD",
     "key_file": "$KEY",
     "rootfs": "$GUEST_ROOT",
-    "feed_url": "http://$LINK_HOST:$FEED_PORT",
-    "wgp_feed_url": "http://$LINK_HOST:$WGP_FEED_PORT",
-    "feed_pubkey": "$WGP_FEED/wg-portal.pub"
+    "feed_url": "http://$LINK_HOST:$FEED_PORT/packages.adb",
+    "wgp_feed_url": "http://$LINK_HOST:$WGP_FEED_PORT/packages.adb",
+    "feed_pubkey": "$PUBKEY"
   }
 }
 EOF
@@ -121,16 +118,6 @@ echo "=== preparing the guest for Ansible"
 echo "=== collecting the packages"
 "$HERE/guest.sh" packages "$DIST" "$VM/pkgs" "$FEED" "$WGP_FEED"
 
-# The feed of the portal: the index of it and the signature of the index. The
-# key is a throwaway one — the check needs a signed feed, not the key of the
-# releases. usign is the tool of OpenWrt: the feeds of the firmware are
-# signed the same way.
-echo "=== signing the feed of the portal"
-rm -f "$WGP_KEY.pub" "$WGP_KEY.sec"
-usign -G -p "$WGP_KEY.pub" -s "$WGP_KEY.sec" -c "the throwaway key of the check"
-"$HERE/make-feed.sh" "$WGP_FEED" "$WGP_KEY.pub"
-usign -S -m "$WGP_FEED/Packages" -s "$WGP_KEY.sec" -x "$WGP_FEED/Packages.sig"
-
 echo "=== building the flash of the router"
 "$HERE/guest.sh" flash "$GUEST_ROOT" "$FLASH" "$FLASH_MB"
 
@@ -138,10 +125,10 @@ echo "=== building the flash of the router"
 
 "$HERE/guest.sh" boot "$FLASH" "$VM/kernel.bin" "$TAP" "$CONSOLE" "$PIDFILE"
 
-# The feeds: opkg knows no file:// url, so the guest fetches the index and
+# The feeds: apk knows no file:// url, so the guest fetches the index and
 # the packages of them over HTTP from the host. The feed of the kernel
 # modules is the one of OpenWrt, the feed of the portal is the one of this
-# project — its index is signed with the key of the check.
+# project — its index is signed with the key of the project.
 echo "=== serving the feed of the kernel modules"
 python3 -m http.server "$FEED_PORT" --directory "$FEED" --bind "$LINK_HOST" \
   > "$VM/feed.log" 2>&1 &
@@ -244,7 +231,7 @@ else
   GUEST_PING="TUNNEL_PING=OK"
 fi
 
-# --- the tunnel, from the client --------------------------------------------------------------
+	# --- the tunnel, from the client --------------------------------------------------------------
 
 # The ping comes after the verification of the guest: the firewall of the
 # router has to know the tunnel interface before the client can reach the

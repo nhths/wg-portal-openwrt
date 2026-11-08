@@ -34,7 +34,8 @@ The layout above is the one of the brief. In the repository today
 `bench-one.sh` is a file of its own (`scripts/bench-one.sh`), copied by
 `scripts/bench.sh` into the initramfs of the measurement guest, and so is the
 init of that guest (`scripts/bench-init.sh`). The packaging is the script
-`scripts/build-ipk.sh` with the templates in `templates/ipk/`.
+`scripts/build-apk.sh` with the templates in `templates/apk/` — the router
+runs OpenWrt 25.12 now, and its package manager is apk, not opkg.
 
 ## run.sh
 

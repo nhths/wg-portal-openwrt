@@ -1,10 +1,10 @@
 ---
-# The checks of the installation of the package: what opkg made of it, the
+# The checks of the installation of the package: what apk made of it, the
 # service it enabled, the binary that answers HTTP — and that the package can
 # be taken away again and installed once more.
 - name: Read the status of the package
   community.openwrt.command:
-    cmd: "opkg status wg-portal"
+    cmd: "apk info wg-portal"
   register: package_status
   changed_when: false
 
@@ -14,7 +14,7 @@
 
 - name: Read the files of the package
   community.openwrt.command:
-    cmd: "opkg files wg-portal"
+    cmd: "apk info -L wg-portal"
   register: package_files
   changed_when: false
 
@@ -53,34 +53,33 @@
     msg: "{{ package_memory.stdout }}"
 
 - name: Remove the package
-  community.openwrt.opkg:
+  community.openwrt.apk:
     name: wg-portal
     state: absent
 
 - name: Check that the package is gone
   community.openwrt.command:
-    cmd: "opkg status wg-portal"
+    cmd: "apk info -e wg-portal"
   register: package_removed
   changed_when: false
-  failed_when: package_removed.stdout | trim != ''
+  failed_when: package_removed.rc == 0
 
 - name: Install the package again
-  # The package is in the feed of this project: opkg takes it from there
+  # The package is in the feed of this project: apk takes it from there
   # again, by its name, and checks the signature of the index of the feed.
-  community.openwrt.command:
-    cmd: "opkg install wg-portal"
-  changed_when: false
-  register: package_reinstall
+  community.openwrt.apk:
+    name: wg-portal
+    state: present
 
 - name: Read the status of the package again
   community.openwrt.command:
-    cmd: "opkg status wg-portal"
+    cmd: "apk info wg-portal"
   register: package_reinstalled
   changed_when: false
 
 - name: Check that the package is installed again
-  ansible.builtin.assert:
-    that:
-      - "'Status: install user installed' in package_reinstalled.stdout"
-    fail_msg: "the package was not installed again"
-    quiet: true
+  community.openwrt.command:
+    cmd: "apk info -e wg-portal"
+  register: package_reinstalled
+  changed_when: false
+  failed_when: package_reinstalled.rc != 0

@@ -33,8 +33,12 @@
   gather_facts: false
   vars:
     feed_url: https://github.com/nhths/wg-portal-openwrt/releases/latest/download
-    feed_key_url: "{{ feed_url }}/wg-portal.pub"
-    feed_fingerprint: 4aae624e9d888fea
+    feed_key_url: "{{ feed_url }}/wg-portal.pem"
+    # The sha256 of the public key of the feed. The key itself is checked by
+    # apk when it checks the signature of the index of the feed — this check
+    # is about the key being the one of the project and not about the
+    # signature.
+    feed_key_sha256: c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443
   tasks:
     - name: Fetch the public key of the feed
       ansible.builtin.uri:
@@ -44,65 +48,45 @@
       delegate_to: localhost
       register: feed_key
 
-    - name: Write the key to the router
-      community.openwrt.copy:
-        content: "{{ feed_key.content }}"
-        dest: /tmp/wg-portal.pub
-        mode: "0644"
-
-    - name: Read the fingerprint of the key
-      community.openwrt.command:
-        cmd: "usign -F -p /tmp/wg-portal.pub"
-      register: router_fingerprint
-      changed_when: false
-
-    - name: Report the fingerprint of the key
-      ansible.builtin.debug:
-        msg: "{{ router_fingerprint.stdout }}"
-
     - name: Fail when the key is not the one of the project
       ansible.builtin.assert:
         that:
-          - feed_fingerprint in router_fingerprint.stdout
+          - feed_key.content | hash('sha256') == feed_key_sha256
         fail_msg: >-
-          the fingerprint of the key is not {{ feed_fingerprint }} —
-          the key is not the one of the project
+          the sha256 of the key of the feed is
+          {{ feed_key.content | hash('sha256') }} — it has to be
+          {{ feed_key_sha256 }}, the key is not the one of the project
         quiet: true
 
-    - name: Trust the public key of the feed
-      community.openwrt.command:
-        cmd: "opkg-key add /tmp/wg-portal.pub"
-      changed_when: false
-
-    - name: Point opkg at the feed of the portal
-      # The firmware ships customfeeds.conf full of null bytes, and opkg does
-      # not read such a file. "src/gz" is the way the feeds of the firmware
-      # are declared: opkg takes the compressed index then, and LuCI needs it
-      # as well — it reads the indexes with "gzip -cd" and skips the plain
-      # ones.
-      community.openwrt.command:
-        cmd: >-
-          [ -f /etc/opkg/customfeeds.conf ]
-          && tr -d "\000" < /etc/opkg/customfeeds.conf > /tmp/customfeeds.conf
-          || : > /tmp/customfeeds.conf;
-          grep -v "^src.* wgp {{ feed_url }}$" /tmp/customfeeds.conf
-          > /tmp/customfeeds.new || :;
-          echo "src/gz wgp {{ feed_url }}" >> /tmp/customfeeds.new;
-          cat /tmp/customfeeds.new > /etc/opkg/customfeeds.conf;
-          rm -f /tmp/customfeeds.conf /tmp/customfeeds.new
-        uses_shell: true
-      changed_when: false
+    - name: Trust the feed of the portal and point apk at it
+      # apk checks the signature of the index of a feed against the keys it
+      # trusts in /etc/apk/keys, so the key of the feed goes there. The feed
+      # is declared in the file OpenWrt keeps across a system upgrade.
+      community.openwrt.apk_feed:
+        url: "{{ feed_url }}/packages.adb"
+        key: "{{ feed_key.content }}"
+        key_name: wg-portal.pem
 
     - name: Install the portal from the feed
-      community.openwrt.opkg:
+      community.openwrt.apk:
         name: wg-portal
         state: present
         update_cache: true
       register: router_install
 
+    - name: Upgrade the portal when the feed has a newer version
+      # `apk add` does not upgrade a package that is installed already, and
+      # the module above does not touch it either — it asks apk about the
+      # package first and leaves it alone when it is there. The upgrade is
+      # asked for explicitly.
+      community.openwrt.command:
+        cmd: "apk upgrade wg-portal"
+      register: router_upgrade
+      changed_when: "'Upgrading' in router_upgrade.stdout"
+
     - name: Report the state of the portal and of its dependency
       community.openwrt.command:
-        cmd: "opkg status wg-portal kmod-wireguard"
+        cmd: "apk info wg-portal kmod-wireguard"
       register: router_state
       changed_when: false
 
@@ -489,7 +473,7 @@
       # the package leaves the old binary running until it is restarted.
       community.openwrt.service:
         name: wg-portal
-        state: "{{ 'restarted' if router_install.changed | default(false) else 'started' }}"
+        state: "{{ 'restarted' if (router_install.changed | default(false) or router_upgrade.changed | default(false)) else 'started' }}"
         enabled: true
 
     - name: Wait for the portal to answer
@@ -504,7 +488,7 @@
 
     - name: Report the state of the portal
       community.openwrt.command:
-        cmd: "logread | tail -20; netstat -ltn; opkg status wg-portal"
+        cmd: "logread | tail -20; netstat -ltn; apk info wg-portal"
         uses_shell: true
       register: portal_state
       changed_when: false

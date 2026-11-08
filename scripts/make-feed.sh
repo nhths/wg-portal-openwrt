@@ -1,45 +1,41 @@
 #!/usr/bin/env bash
-# The feed of the portal: the index of the packages and the public key of it.
+# The feed of the portal: the index of the packages and the signature of it.
 #
-#   make-feed.sh <dist-dir> <public-key>
+# Runs in the toolbox image (Dockerfile.pkg), which brings the apk-tools: the
+# index of the feed is the database of apk v3, and only apk itself writes it.
 #
-# The index is the list of the packages of the feed in the format of opkg:
-# the fields of the control file of the package and the name, the size and
-# the checksum of the file itself. The fields come from the control file of
-# the .ipk, so the index cannot drift from the package.
+# The index is signed with the key of the project — an EC key of the curve
+# P-256, the same kind the firmware of OpenWrt signs its own feeds with. The
+# public half of it lives in /etc/apk/keys of the router, and apk checks the
+# signature of the index against the keys it trusts there.
 #
-# The signature of the index is not made here: it is made by usign, the tool
-# of OpenWrt — the feeds of the firmware are signed the same way. The caller
-# signs the index and puts the signature next to it.
+# The index is built from the package that is already signed: apk refuses to
+# index a package whose signature it cannot check, and the keys of the feed
+# are the ones it checks it against (--keys-dir).
 set -euo pipefail
 
-DIST=${1:?the directory with the package}
-PUBKEY=${2:?the public key of the feed}
+W=${W:-/w}
+# The keys of the feed: the public one is in the repository, the secret one
+# is in the secrets of the CI and, for the local runs, in the file below.
+PUBKEY=${PUBKEY:-/keys/wg-portal.pem}
+SECRET=${SECRET:-/key/secret.pem}
 
-IPK=$(ls "$DIST"/wg-portal_*.ipk 2>/dev/null | head -1)
-[ -n "$IPK" ] || { echo "no .ipk in $DIST — run 'make dist' first" >&2; exit 1; }
+APK=$(ls "$W"/wg-portal-*.apk 2>/dev/null | head -1)
+[ -n "$APK" ] || { echo "no .apk in $W — run 'make dist' first" >&2; exit 1; }
 [ -f "$PUBKEY" ] || { echo "no public key in $PUBKEY" >&2; exit 1; }
-
-NAME=$(basename "$IPK")
-SIZE=$(stat -c %s "$IPK")
-SHA=$(sha256sum "$IPK" | cut -d' ' -f1)
-
-CONTROL=$(tar -xzOf "$IPK" ./control.tar.gz | tar -xzO ./control)
-
-{
-  printf '%s\n' "$CONTROL"
-  printf 'Filename: %s\n' "$NAME"
-  printf 'Size: %s\n' "$SIZE"
-  printf 'SHA256sum: %s\n' "$SHA"
-} > "$DIST/Packages"
-
-cp "$PUBKEY" "$DIST/wg-portal.pub"
-
-# The index is published twice: as it is and compressed. LuCI reads the
-# indexes of the feeds with "gzip -cd", and it skips the files that are not
-# compressed — a plain index is invisible to it, and the package shows up in
-# the list of the installed ones without a size and without a description.
-gzip -9 -c "$DIST/Packages" > "$DIST/Packages.gz"
+[ -f "$SECRET" ] || { echo "no secret key in $SECRET" >&2; exit 1; }
 
 echo "=== the index of the feed"
-cat "$DIST/Packages"
+apk --keys-dir "$(dirname "$PUBKEY")" mkndx \
+  --sign-key "$SECRET" \
+  --output "$W/packages.adb" \
+  --description "The feed of the portal for the router of the LAN" \
+  "$APK"
+cp "$PUBKEY" "$W/wg-portal.pem"
+
+# The artifacts belong to the user of the host — the container runs as root.
+if [ -n "${HOST_UID:-}" ] && [ -n "${HOST_GID:-}" ]; then
+  chown "$HOST_UID:$HOST_GID" "$W/packages.adb" "$W/wg-portal.pem" 2>/dev/null || true
+fi
+
+ls -l "$W/packages.adb" "$W/wg-portal.pem"

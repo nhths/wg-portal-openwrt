@@ -1,7 +1,7 @@
 ---
 # The OpenWrt setup of the emulated router of the WireGuard check.
 #
-# The guest is a stock OpenWrt 24.10.8 on the flash of the emulated router.
+# The guest is a stock OpenWrt 25.12.6 on the flash of the emulated router.
 # The setup is done with the same collection the real LAN router uses: its
 # modules are ucode scripts, so no Python is needed on the device.
 #
