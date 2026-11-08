@@ -79,6 +79,11 @@ trap cleanup EXIT
 mkdir -p "$VM"
 cd "$VM"
 
+# The scratch files of a run as root are not writable by the user of the host,
+# and the run fails on them.
+rm -f "$CONSOLE" "$PIDFILE" "$VM/feed.log" "$VM/wgp-feed.log" \
+  "$VM/feed.pid" "$VM/wgp-feed.pid" "$VM/peer.conf" "$VM/vars.json"
+
 # The values of the emulated router are passed to the play with them.
 cat > "$VM/vars.json" <<EOF
 {

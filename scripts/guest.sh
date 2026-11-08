@@ -106,6 +106,9 @@ bootstrap() {
   fi
 
   mkdir -p "$rootfs/etc/dropbear"
+  # A file left over by a run as root is not writable by the user of the
+  # host, and the copy over it fails.
+  rm -f "$rootfs/etc/dropbear/authorized_keys"
   cp "$key.pub" "$rootfs/etc/dropbear/authorized_keys"
   chmod 600 "$rootfs/etc/dropbear/authorized_keys"
 }
@@ -121,6 +124,9 @@ packages() {
   local dist=$1 kmods=$2 feed=$3 wgpfeed=$4
 
   mkdir -p "$feed" "$wgpfeed"
+  # A directory left over by a run as root is not writable by the user of
+  # the host, and the copies into it fail.
+  $SUDO chown -R "$(id -u):$(id -g)" "$feed" "$wgpfeed"
 
   local apk pkg file
   apk=$(ls "$dist"/wg-portal-*.apk 2>/dev/null | head -1)
@@ -176,6 +182,9 @@ boot() {
   $SUDO ethtool -K "$tap" tso off gso off gro off tx off sg off 2>/dev/null || true
 
   echo "=== booting $QEMU with the OpenWrt rootfs"
+  # A console or a pid file left over by a run as root is not writable by
+  # the user of the host, and the boot fails on them.
+  rm -f "$console" "$pidfile"
   timeout "$BOOT_TIMEOUT" "$QEMU" \
     -M virt -cpu cortex-a53 -m "$MEM_MB" -nographic -no-reboot \
     -kernel "$kernel" \
