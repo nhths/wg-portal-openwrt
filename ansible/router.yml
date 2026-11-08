@@ -360,24 +360,46 @@
       # tunnel land in the chain of that zone, and the traffic of the peers
       # leaves through the lan, so they never apply to it. The rule of its
       # own does the same for the peers: the gateway answers to the router.
+      #
+      # The section is of the type nat and not a redirect with the target
+      # SNAT: LuCI nags about the second form until it is migrated. fw4 puts
+      # the rule of a nat into the chain of the zone of its source — the zone
+      # the traffic leaves through, and that is the lan.
+      #
+      # The section is found by its name and not created by it: a section
+      # that LuCI has migrated already carries this name.
       community.openwrt.uci:
         autocommit: false
         operations:
           - command: ensure
             config: firewall
-            type: redirect
-            name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+            type: nat
             find:
               name: "{{ item.name }}_{{ tunnel_zone }}_snat"
             value:
               name: "{{ item.name }}_{{ tunnel_zone }}_snat"
-              src: "{{ tunnel_zone }}"
-              dest: "{{ item.dest }}"
+              src: "{{ item.dest }}"
+              src_ip: "{{ tunnel_network }}"
               dest_ip: "{{ item.dest_ip }}"
               dest_port: "{{ item.dest_port }}"
-              src_ip: "{{ tunnel_network }}"
-              src_dip: "{{ router_address }}"
-              target: SNAT
+              snat_ip: "{{ router_address }}"
+              target: snat
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Take the rules of the old form of the tunnel away
+      # The masquerade of the way back was a redirect with the target SNAT
+      # before; LuCI wants the sections of the type nat. The section is
+      # taken away by its name, so that the rule of the nat above is the
+      # only one.
+      community.openwrt.uci:
+        autocommit: false
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}_snat"
       loop: "{{ public_redirects | default([]) }}"
       loop_control:
         label: "{{ item.name | default('?') }}"
@@ -387,12 +409,14 @@
       # of the tunnel, and that one matched by the port alone.
       community.openwrt.uci:
         autocommit: false
-        command: delete
-        key: "firewall.{{ item.name }}_{{ tunnel_zone }}"
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}"
       loop: "{{ public_redirects | default([]) }}"
       loop_control:
         label: "{{ item.name | default('?') }}"
-      failed_when: false
 
     - name: Masquerade the traffic that leaves to the internet
       # The zone of the wan masquerades the traffic that leaves through it. A

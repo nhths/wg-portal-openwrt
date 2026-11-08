@@ -758,6 +758,24 @@ router, but they land in the chain of the zone of the tunnel — and the
 traffic of the peers leaves through the lan, so they never apply to it. The
 rule of the play does it for the peers: the gateway answers to the router.
 
+The rule is a section of the type `nat` and not a redirect with the target
+`SNAT`. LuCI nags about the second form on every page of the firewall until
+it is migrated, and the migration is LuCI's business — the play has to
+leave the router in the form LuCI wants. fw4 puts the rule of a `nat` into
+the chain of the zone of its **source** — the zone the traffic leaves
+through — and that is the lan, where the peers' traffic goes:
+
+```text
+chain srcnat_lan {
+        ip saddr 172.26.0.0/24 ip daddr 192.168.31.98 tcp dport 443 snat ip to 192.168.31.1
+}
+```
+
+The section is found by its name and not created by it: a section that
+LuCI has migrated already carries that name, and the play has to change it
+in place instead of adding a second one. The old form is taken away by the
+same name, so that the rule of the `nat` is the only one.
+
 ### The proxy of the router
 
 The router has a transparent proxy on it (podkop), and the traffic of the

@@ -205,6 +205,10 @@ it. A rule of the firewall of its own for the tunnel does the opposite of
 what it looks like it does: fw4 puts it into the chain of the zone of the
 source, and it masquerades the traffic that goes *into* the tunnel.
 
+The way back to the gateway is masqueraded by a section of the type `nat`
+(`<name>_wg_snat`) — the old form of it was a redirect with the target
+`SNAT`, and LuCI nags about that form until it is migrated.
+
 Where the router has a transparent proxy (podkop), the tunnel has to be in
 the interfaces of it (`source_network_interfaces`) — the peers use the dns of
 the router, and it answers them with the fake addresses of the proxy.
