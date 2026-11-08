@@ -1,20 +1,15 @@
 # The release of the .apk package for wg-portal.
 #
 # Every two weeks the workflow looks for a new release of the portal
-# (h44z/wg-portal). If there is one, it builds the package for the router
-# (the binary packed with UPX), checks it in the emulated OpenWrt — the
-# package is installed there and a real WireGuard tunnel is made through it —
-# and publishes the .apk as a release of this repository.
+# (h44z/wg-portal). If there is one, it builds the package for the router,
+# checks it in the emulated OpenWrt and publishes the .apk as a release of
+# this repository.
 #
 # The version of the release is four numbers: the three of the version of the
-# portal and the fourth one is the revision of the packaging. It is bumped
-# when the packaging changes.
+# portal and the fourth one is the revision of the packaging.
 #
 # The state of the workflow is the release itself: if the version of the
 # portal is already released here, the run does nothing.
-#
-# The workflow runs the code of this repository, so the GitHub copy of the
-# project is the one the Actions run in.
 name: wg-portal release
 
 on:
@@ -88,9 +83,7 @@ jobs:
 
       - name: Write the secret key of the feed
         # The package and the index of the feed are signed with it: apk
-        # installs nothing whose signature it cannot check. The secret half of
-        # the key is in the secrets of the repository, the public half is in it
-        # (keys/wg-portal.pem).
+        # installs nothing whose signature it cannot check.
         if: steps.state.outputs.build == 'true'
         env:
           SECRET_KEY: ${{ secrets.APK_SECRET_KEY }}
@@ -100,9 +93,6 @@ jobs:
           chmod 600 "$RUNNER_TEMP/secret.pem"
 
       - name: Build the package and the index of the feed
-        # The package is signed while it is built, and the index of the feed
-        # is signed while it is built as well — both with the key of the
-        # project.
         if: steps.state.outputs.build == 'true'
         run: |
           set -euo pipefail

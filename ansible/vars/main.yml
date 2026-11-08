@@ -3,8 +3,6 @@
 # the values of the emulated router in with -e @<file>.json as
 # "wgp_overrides" — they are merged into these.
 
-# The templates of the project: the files that are written into the router
-# and into the package are rendered from them.
 template_dir: "{{ playbook_dir }}/../templates"
 
 wgp_defaults:
@@ -14,16 +12,12 @@ wgp_defaults:
   admin_password: wg-portal-check-password
   interface: wg0
 
-  # The tunnel.
   server_addr: 10.99.0.1
   client_addr: 10.99.0.2
   subnet: 10.99.0.0/24
 
-  # The guest and the key the harness connects with.
   link_guest: 10.77.0.2
   key_file: /tmp/wgp-vm/id_ed25519
-  # The rootfs of the guest: the network is written into it before the flash
-  # is built.
   rootfs: /tmp/wgp-vm/rootfs
 
   # The feed with the kernel modules. The url is the url of the index of the
@@ -36,12 +30,9 @@ wgp_defaults:
   # the package.
   wgp_feed_url: http://10.77.0.1:18081/packages.adb
 
-  # The public key of the feed of the portal. apk checks the signature of
-  # the index against the keys it trusts, so the key goes into /etc/apk/keys
-  # of the guest.
+  # The public key of the feed of the portal: the index is signed with it.
   feed_pubkey: "{{ playbook_dir }}/../keys/wg-portal.pem"
 
-  # The kernel modules the WireGuard one needs.
   modules:
     - libcurve25519-generic
     - poly1305-neon

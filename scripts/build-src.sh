@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Build wg-portal from source in a container and compare the result with the
-# release binary. Touches nothing on the host but Docker.
-#
-#   VER=v2.3.1 ./scripts/build-src.sh
+# release binary.
 set -euo pipefail
 
 VER=${VER:-v2.3.1}
@@ -34,8 +32,8 @@ build_variant() {
   ls -l "$OUT/wg-portal-$name"
 }
 
-# Exactly the upstream Makefile flags: -w -s + netgo. Reproduces the release
-# binary byte for byte (41 353 378 B for v2.3.1).
+# The upstream Makefile flags: -w -s + netgo. Reproduces the release binary
+# byte for byte.
 build_variant upstream \
   '-ldflags "-w -s -extldflags \"-static\"" -tags netgo'
 

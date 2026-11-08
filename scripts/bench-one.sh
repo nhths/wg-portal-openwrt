@@ -1,8 +1,6 @@
 #!/bin/sh
 # Start one wg-portal binary and measure its startup time and RSS.
-#
-# POSIX sh, so it runs in the measurement guest (busybox), in an Alpine
-# container and directly on the router.
+# POSIX sh, so it runs in the measurement guest (busybox) and on the router.
 #
 # Usage: bench-one.sh /path/to/wg-portal
 BIN=$1

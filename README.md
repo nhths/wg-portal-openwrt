@@ -77,8 +77,8 @@ is what the feed is for.
 
 ### With Ansible
 
-The play `ansible/router.yml` does the same on the LAN router: it fetches
-the public key of the feed, checks it, trusts it, points apk at the feed and
+The play `ansible/router.yml` does the same on the LAN router: it fetches the
+public key of the feed, checks it, trusts it, points apk at the feed and
 installs the portal from it.
 
 It needs the collection `community.openwrt` — the same one the check of the
@@ -91,9 +91,9 @@ ansible-galaxy collection install -r ansible/requirements.yml
 Its modules are ucode scripts, and the router runs them: the router has no
 Python, and it needs none.
 
-Apart from that, it is the play and its vars file — the ports of the
-router are in `ansible/vars/router.yml`, next to the play. Both can be
-fetched from the mirror and run from the directory they are fetched into:
+Apart from that, it is the play and its vars file — the ports of the router
+are in `ansible/vars/router.yml`, next to the play. Both can be fetched from
+the mirror and run from the directory they are fetched into:
 
 ```sh
 mkdir -p ansible/vars
@@ -120,48 +120,10 @@ The play checks the key of the feed before it trusts it: the sha256 of it
 has to be the one of the project
 (`c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443`).
 
-The configuration of the portal, the zone of the firewall and the service are
-in the play as well — see below.
+## Configure
 
-### Configuration
-
-The play `ansible/router.yml` does it: it writes the configuration of the
-portal when there is none yet, gives the tunnel a zone of the firewall, lets
-the peers in from the internet, masquerades the traffic on the way out and
-starts the service.
-
-The ports are in `ansible/vars/router.yml`: the web interface of the portal
-and the tunnel. The port of the tunnel is the standard port of WireGuard by
-default, another one with `-e wireguard_port=...`. The play checks it
-against the port the portal really listens on and stops when they are not
-the same — the rule of the firewall would open a port nobody listens on.
-
-Where the router has a transparent proxy (podkop), the play adds the tunnel
-to the interfaces of the proxy: the peers use the dns of the router, and it
-answers them with the fake addresses of the proxy — without the tunnel in
-the list of the proxy, their traffic to those addresses is not intercepted
-and goes to the internet as it is.
-
-The public address of the router is the address of the services of the
-gateway: the firewall of the router redirects the traffic of the wan zone to
-them. The traffic of the peers has to reach them as well — otherwise it is
-delivered to the router itself, and the router answers it with the
-certificate of its own web interface instead of the certificate of the
-gateway.
-
-The play does it the way fw4 builds the hairpin of the lan: the redirects of
-the wan zone get the zone of the tunnel in `reflection_zone`, and the zone of
-the tunnel gets the network of the interface. The rules of the tunnel are
-then the rules of the hairpin, and they match the public address of the
-router as well — the traffic of the peers to the other sites is left alone.
-A redirect of the zone of the tunnel on its own would match by the port
-alone, and then every request of the peers would go to the gateway.
-
-The portal owns the configuration of itself: the play writes it only when
-there is none, and it never touches the password of the administrator
-again.
-
-By hand, the same is:
+The package carries no configuration: the portal cannot run before it is
+written. By hand:
 
 ```sh
 mkdir -p /etc/wg-portal
@@ -177,40 +139,7 @@ EOF
 
 The database has to be on the flash: `/tmp` is a tmpfs.
 
-The traffic of the peers is not tracked by the connection tracking of the
-firewall, so the interface of the tunnel needs a zone of its own — by
-**device**, not by network (the interface is created by the portal itself and
-is not in `/etc/config/network`):
-
-```text
-config zone
-        option name 'wg'
-        list device 'wg0'
-        option subnet '172.26.0.0/24'
-        option input 'ACCEPT'
-```
-
-The `subnet` is the network of the interface of the tunnel — the addresses of
-the peers. fw4 needs them for the rules of the reflection: without them the
-rules of the tunnel match the traffic of the peers by the port alone.
-
-The traffic of the peers is masqueraded by the zone of the wan
-(`option masq '1'`) — the zone masquerades the traffic that leaves through
-it. A rule of the firewall of its own for the tunnel does the opposite of
-what it looks like it does: fw4 puts it into the chain of the zone of the
-**source**, and that chain is entered by the traffic that leaves through the
-zone — so it masquerades the traffic that goes *into* the tunnel, and the
-peers never answer the ping of the portal.
-
-The way back to the gateway is masqueraded by a section of the type `nat`
-(`<name>_wg_snat`) — the old form of it was a redirect with the target
-`SNAT`, and LuCI nags about that form until it is migrated.
-
-Where the router has a transparent proxy (podkop), the tunnel has to be in
-the interfaces of it (`source_network_interfaces`) — the peers use the dns of
-the router, and it answers them with the fake addresses of the proxy.
-
-And then the service:
+Then the service:
 
 ```sh
 /etc/init.d/wg-portal enable
@@ -218,6 +147,12 @@ And then the service:
 ```
 
 The web UI is on the port of the config.
+
+The tunnel needs a zone of the firewall of its own — by **device**, not by
+network (the interface is created by the portal itself and is not in
+`/etc/config/network`), and the traffic of the peers has to be masqueraded on
+the way out. The play `ansible/router.yml` does all of it; the details are in
+[AGENTS.md](AGENTS.md).
 
 ## Update
 

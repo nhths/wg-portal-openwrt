@@ -3,9 +3,6 @@
 #
 # Measurements and install checks run inside a fully emulated arm64 guest
 # (qemu-system-aarch64).
-#
-# The WireGuard check runs in its own image: the emulated router with the
-# portal inside and a WireGuard client next to it.
 
 # The version of the portal (the tag of the upstream release).
 VER ?= v2.3.1
@@ -24,17 +21,14 @@ IMAGE ?= wg-portal-check
 PKG_IMAGE ?= wg-portal-pkg
 TAG ?= $(VER)
 
-# The keys of the feed: the public one is in the repository (the keys/ of it),
-# the secret one is in the secrets of the CI and, for the local runs, in the
-# file below. The package is signed with the secret key — apk installs nothing
-# whose signature it cannot check.
+# The secret half of the key of the feed. The package and the index of the
+# feed are signed with it.
 SECRET_KEY ?= $(HOME)/.config/wg-portal/secret.pem
 
 LINT_IMAGE ?= cr.knois.ru/pipelines/lint:latest
 PODMAN ?= podman
 # CI sets CI=true for every job: inside the lint image the tools are called
-# directly, on a developer machine they run in the same image, so the result
-# is the same everywhere.
+# directly, on a developer machine they run in the same image.
 ifeq ($(CI),true)
   RUN_LINT = $(1)
 else
@@ -43,9 +37,6 @@ endif
 
 # Rootless podman maps the ids of the users its own way: the id of the host
 # has to be kept, or the container cannot write into the mounted directory.
-# The root of the host is mapped to itself anyway, and there the flag is not
-# needed — the runner of the CI builds with podman as root.
-# Docker has no such mapping, it takes the id of the user as it is.
 ifeq ($(DOCKER),podman)
   RUN_ID = $(shell [ "$$(id -u)" = 0 ] || echo --userns=keep-id)
 else

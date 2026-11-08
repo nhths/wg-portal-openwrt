@@ -1,12 +1,5 @@
 ---
 # GitLab CI for the wg-portal package for OpenWrt.
-#
-# The lint stage runs the linters in the lint image of the group. The build
-# stage builds the image of the WireGuard check: the emulated router with the
-# portal inside and a WireGuard client next to it. The check itself needs a
-# tun device and a privileged container, so it is run where there is one —
-# see the README.
-
 stages:
   - lint
   - build
@@ -38,9 +31,8 @@ build:
   script:
     - make image DOCKER=podman
 
-# The end-to-end check: the emulated router with the portal inside and a
-# WireGuard client next to it, in one container. It needs a tun device, which
-# not every runner has, so it is manual.
+# The end-to-end check. It needs a tun device, which not every runner has,
+# so it is manual.
 check:
   stage: build
   when: manual

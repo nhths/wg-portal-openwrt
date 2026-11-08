@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Drive the wg-portal API: log in, create a server interface and a peer and
-print the peer's wg-quick configuration.
-
-Only the standard library is used. The API is the one the web UI talks to:
-POST /api/v0/auth/login, GET /api/v0/csrf, GET /api/v0/interface/prepare,
-POST /api/v0/interface/new, GET /api/v0/peer/iface/<iface>/prepare,
-POST /api/v0/peer/iface/<iface>/new and GET /api/v0/peer/config/<id>.
-"""
+print the peer's wg-quick configuration."""
 
 import argparse
 import base64

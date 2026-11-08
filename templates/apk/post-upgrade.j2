@@ -1,6 +1,5 @@
 #!/bin/sh
-# The upgrade of the package enables the service as well: it is enabled
-# already, but the service is not restarted — the old binary keeps running
-# until the play restarts it.
+# The service is not restarted here: the old binary keeps running until the
+# play restarts it.
 /etc/init.d/wg-portal enable
 exit 0

@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 # The emulated router: the OpenWrt guest and the machine it runs on.
 #
-# One script, five steps:
-#
-#   fetch      download the rootfs, the kernel and the kernel modules
-#   bootstrap  the key Ansible logs in with
-#   packages   collect the .apk of the portal and the feed of the modules
-#   flash      build the 128 MB flash of the router
-#   boot       create the tap, start QEMU and wait for the guest
-#
-# The step is the first argument:
-#
 #   guest.sh fetch      <dir>
 #   guest.sh bootstrap  <rootfs-dir> <key-file>
 #   guest.sh packages   <dist-dir> <target-dir> <kernel-modules-dir> <feed-dir>
@@ -25,7 +15,8 @@ OW_IMG=openwrt-${OW_REL}-armsr-armv8-generic-ext4-rootfs.img
 OW_KERNEL=openwrt-${OW_REL}-armsr-armv8-generic-kernel.bin
 
 # The WireGuard kernel module and the crypto modules it needs are not part of
-# the image, they come from the OpenWrt repository.
+# the image, they come from the OpenWrt repository. The name of a package of
+# apk v3 is its name and its version: kmod-wireguard-6.12.112-r1.apk.
 KMOD_PACKAGES=(
   kmod-wireguard
   kmod-crypto-lib-curve25519
@@ -87,12 +78,9 @@ fetch() {
   [ -n "$kdir" ] || { echo "no kernel module directory for $modver" >&2; exit 1; }
   index=$OW_TARGET/kmods/$kdir
 
-  # The index of the feed of the modules: the database of apk v3. It is signed
-  # with the key of the firmware, and the guest trusts that key out of the box
-  # (/etc/apk/keys of the rootfs).
+  # The index of the feed of the modules is signed with the key of the
+  # firmware, and the guest trusts that key out of the box.
   [ -f pkgs/packages.adb ] || curl_get "$index/packages.adb" pkgs/packages.adb
-  # The versions of the packages: the index of the repository has them, and
-  # the name of a package of apk v3 is its name and its version.
   [ -f pkgs/index.json ] || curl_get "$index/index.json" pkgs/index.json
 
   for pkg in "${KMOD_PACKAGES[@]}"; do
@@ -106,11 +94,9 @@ fetch() {
 
 # --- the guest for Ansible ------------------------------------------------------
 
-# The setup of the guest is done by Ansible over SSH, so the guest has to be
-# reachable before Ansible can start. The key Ansible logs in with is baked
-# into the flash for that; the network of the guest is written into the
-# rootfs by the play (templates/openwrt/network.j2), because it has to be in
-# the flash before the router boots.
+# The network of the guest is written into the rootfs by the play
+# (templates/openwrt/network.j2): it has to be in the flash before the router
+# boots, because Ansible needs SSH to get into the guest at all.
 bootstrap() {
   local rootfs=$1 key=$2
 
@@ -126,17 +112,10 @@ bootstrap() {
 
 # --- the packages of the guest ---------------------------------------------------
 
-# The feed of the kernel modules: the packages and the index that describes
-# them. The portal depends on kmod-wireguard, and apk has to resolve that
-# dependency on its own — the way it does on the router, where the modules
-# come from the feed of the firmware.
-#
-# The feed of the portal: the package of it and the index of the feed, signed
-# with the key of the project.
-#
-# apk knows no file:// url, so the feeds are served over HTTP by the host: the
-# guest fetches the index and the packages from them. The url of a feed is the
-# url of its index — a url that ends with ".adb" is taken as it is, and the
+# The feed of the kernel modules and the feed of the portal. apk knows no
+# file:// url, so the feeds are served over HTTP by the host: the guest
+# fetches the index and the packages from them. The url of a feed is the url
+# of its index — a url that ends with ".adb" is taken as it is, and the
 # packages of the feed are taken from the same directory by their name.
 packages() {
   local dist=$1 kmods=$2 feed=$3 wgpfeed=$4
@@ -146,10 +125,7 @@ packages() {
   local apk pkg file
   apk=$(ls "$dist"/wg-portal-*.apk 2>/dev/null | head -1)
   [ -n "$apk" ] || { echo "no .apk in $dist — run 'make dist' first" >&2; exit 1; }
-  # The package of the feed of the portal: the name of it is the one of the
-  # index, apk fetches it by that name.
   cp "$apk" "$wgpfeed/"
-  # The index of the feed of the portal: it is built and signed by 'make feed'.
   [ -f "$dist/packages.adb" ] || { echo "no index in $dist — run 'make feed' first" >&2; exit 1; }
   cp "$dist/packages.adb" "$wgpfeed/packages.adb"
 
@@ -161,8 +137,6 @@ packages() {
     cp "$file" "$feed/"
   done
 
-  # The index of the feed of the modules: the database of apk v3, signed with
-  # the key of the firmware.
   cp "$kmods/packages.adb" "$feed/packages.adb"
 
   ls -l "$feed" "$wgpfeed"
@@ -170,9 +144,8 @@ packages() {
 
 # --- the flash of the router ------------------------------------------------------
 
-# The router equivalent is 128 MB of flash and 512 MB of RAM. The image is
-# attached as a virtio disk and the guest boots from it directly, so the rootfs
-# lives on the flash and does not eat the RAM (as it would in an initramfs).
+# The rootfs lives on the flash and does not eat the RAM (as it would in an
+# initramfs).
 flash() {
   local rootfs=$1 image=$2 size=${3:-128}
 
@@ -213,9 +186,8 @@ boot() {
     < /dev/null > "$console" 2>&1 &
   echo $! > "$pidfile"
 
-  # Ansible needs the guest to be up: the boot of OpenWrt under the emulation
-  # takes a while, and a host that does not answer yet is "unreachable" for
-  # ansible, not "failed" — it does not retry.
+  # A host that does not answer yet is "unreachable" for ansible, not
+  # "failed" — it does not retry. So the boot is waited for here.
   echo "=== waiting for the guest"
   local i=0
   until (exec 3<>/dev/tcp/"$LINK_GUEST"/22) 2>/dev/null; do

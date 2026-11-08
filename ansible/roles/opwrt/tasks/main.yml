@@ -15,9 +15,7 @@
 
 - name: Accept the architectures of the packages
   # apk takes the list of the architectures from /etc/apk/arch, one per
-  # line, and refuses a package whose architecture is not in it. The portal
-  # is built for the architecture of the router (aarch64_cortex-a53), the
-  # kernel modules for the one of the OpenWrt build (aarch64_generic).
+  # line, and refuses a package whose architecture is not in it.
   community.openwrt.copy:
     content: |
       aarch64_generic
@@ -26,13 +24,9 @@
     mode: "0644"
 
 - name: Point apk at the feed of the kernel modules
-  # The kernel modules come from the feed of OpenWrt. The feeds of the
-  # firmware are replaced: the guest has no internet, the feed of the check
-  # is the only one it can reach.
-  #
-  # The url of a feed is the url of its index: a url that ends with ".adb"
-  # is taken as it is, and the packages of the feed are taken from the same
-  # directory by their name.
+  # The feeds of the firmware are replaced: the guest has no internet, the
+  # feed of the check is the only one it can reach. The url of a feed is the
+  # url of its index: a url that ends with ".adb" is taken as it is.
   community.openwrt.copy:
     content: |
       {{ wgp.feed_url }}
@@ -63,9 +57,7 @@
     msg: "{{ opwrt_update.stdout }}"
 
 - name: Install the portal
-  # The portal is in the feed of this project: apk finds it by its name and
-  # checks the signature of the index of the feed against the key of it. Its
-  # dependency, the WireGuard kernel module, apk resolves on its own: it
+  # Its dependency, the WireGuard kernel module, apk resolves on its own: it
   # takes it from the feed of OpenWrt, with the modules it needs.
   community.openwrt.apk:
     name: wg-portal
@@ -93,7 +85,7 @@
 - name: Load the WireGuard kernel modules
   # OpenWrt has no modprobe, the modules are loaded by kmodloader. The
   # postinstall scripts of the packages load them already, so a failure here
-  # is not a problem — the check of the tunnel tells if the module is there.
+  # is not a problem.
   community.openwrt.command:
     cmd: "kmodloader {{ item }}"
   loop: "{{ wgp.modules }}"

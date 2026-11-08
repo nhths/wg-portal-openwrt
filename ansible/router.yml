@@ -59,9 +59,8 @@
         quiet: true
 
     - name: Trust the feed of the portal and point apk at it
-      # apk checks the signature of the index of a feed against the keys it
-      # trusts in /etc/apk/keys, so the key of the feed goes there. The feed
-      # is declared in the file OpenWrt keeps across a system upgrade.
+      # The feed is declared in the file OpenWrt keeps across a system
+      # upgrade.
       community.openwrt.apk_feed:
         url: "{{ feed_url }}/packages.adb"
         key: "{{ feed_key.content }}"
@@ -77,8 +76,7 @@
     - name: Upgrade the portal when the feed has a newer version
       # `apk add` does not upgrade a package that is installed already, and
       # the module above does not touch it either — it asks apk about the
-      # package first and leaves it alone when it is there. The upgrade is
-      # asked for explicitly.
+      # package first and leaves it alone when it is there.
       community.openwrt.command:
         cmd: "apk upgrade wg-portal"
       register: router_upgrade
@@ -232,8 +230,6 @@
             unique: true
 
     - name: Tell the firewall the network of the tunnel
-      # The zone names the device, not a network: the interface of the tunnel
-      # is created by the portal itself and is not in /etc/config/network.
       # Without the network fw4 does not know the addresses of the peers.
       community.openwrt.uci:
         autocommit: false
@@ -296,8 +292,7 @@
       failed_when: false
 
     - name: Read the redirects of the wan zone
-      # "uci get" of a section returns the type of it, not its options, so the
-      # options of every redirect are read one by one.
+      # "uci get" of a section returns the type of it, not its options.
       community.openwrt.uci:
         command: get
         config: firewall
@@ -322,8 +317,7 @@
       # to the public address of the router is redirected to the gate. The zone
       # of the tunnel wants the same, and the reflection of the redirect gives
       # it to the zone of the tunnel. A redirect of the zone of the tunnel on
-      # its own would match by the port alone, and then every request of the
-      # peers would go to the gate.
+      # its own would match by the port alone.
       community.openwrt.uci:
         autocommit: false
         operations:
@@ -350,8 +344,8 @@
       # the rule of a nat into the chain of the zone of its source — the zone
       # the traffic leaves through, and that is the lan.
       #
-      # The section is found by its name and not created by it: a section
-      # that LuCI has migrated already carries this name.
+      # The section is found by its name: one that LuCI has migrated already
+      # carries this name.
       community.openwrt.uci:
         autocommit: false
         operations:

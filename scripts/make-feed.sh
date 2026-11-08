@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 # The feed of the portal: the index of the packages and the signature of it.
-#
-# Runs in the toolbox image (Dockerfile.pkg), which brings the apk-tools: the
-# index of the feed is the database of apk v3, and only apk itself writes it.
-#
-# The index is signed with the key of the project — an EC key of the curve
-# P-256, the same kind the firmware of OpenWrt signs its own feeds with. The
-# public half of it lives in /etc/apk/keys of the router, and apk checks the
-# signature of the index against the keys it trusts there.
-#
-# The index is built from the package that is already signed: apk refuses to
-# index a package whose signature it cannot check, and the keys of the feed
-# are the ones it checks it against (--keys-dir).
+# Runs in the toolbox image (Dockerfile.pkg).
 set -euo pipefail
 
 W=${W:-/w}
@@ -19,6 +8,10 @@ W=${W:-/w}
 # is in the secrets of the CI and, for the local runs, in the file below.
 PUBKEY=${PUBKEY:-/keys/wg-portal.pem}
 SECRET=${SECRET:-/key/secret.pem}
+
+# The index is built from the package that is already signed: apk refuses to
+# index a package whose signature it cannot check, and the keys of the feed
+# are the ones it checks it against (--keys-dir).
 
 APK=$(ls "$W"/wg-portal-*.apk 2>/dev/null | head -1)
 [ -n "$APK" ] || { echo "no .apk in $W — run 'make dist' first" >&2; exit 1; }

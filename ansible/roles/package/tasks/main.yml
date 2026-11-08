@@ -65,8 +65,6 @@
   failed_when: package_removed.rc == 0
 
 - name: Install the package again
-  # The package is in the feed of this project: apk takes it from there
-  # again, by its name, and checks the signature of the index of the feed.
   community.openwrt.apk:
     name: wg-portal
     state: present

@@ -15,14 +15,10 @@
     msg: "{{ tunnel_interface.stdout | trim }}"
 
 - name: Put the tunnel interface into the firewall
-  # The interface of the portal belongs to no zone of the firewall, and the
-  # traffic of a peer is not tracked by the connection tracking: the default
-  # policy of the firewall rejects it, and the peer gets an "unreachable"
-  # instead of the answer.
-  #
   # The zone has to name the device, not a network: the interface of the
   # portal is created by the portal itself and is not in /etc/config/network,
-  # so a network of that name would never match any traffic.
+  # so a network of that name would never match any traffic. Without a zone
+  # of its own the default policy rejects the traffic of the peer.
   community.openwrt.uci:
     autocommit: true
     operations:

@@ -1,6 +1,5 @@
 #!/bin/sh
-# The init of the measurement guest: it mounts what it needs and measures
-# every binary in /work.
+# The init of the measurement guest.
 mount -t proc     none /proc
 mount -t sysfs    none /sys
 mount -t devtmpfs none /dev

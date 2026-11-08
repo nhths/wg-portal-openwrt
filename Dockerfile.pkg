@@ -4,10 +4,6 @@
 #
 #   docker build -f Dockerfile.pkg -t wg-portal-pkg:local .
 #   docker run --rm -v "$PWD/dist:/w" wg-portal-pkg:local
-#
-# The apk-tools are taken from the ready-made package of Alpine. The version
-# of them is 3.0.9: the format of the packages and of the indexes it writes is
-# the one of apk 3.0.x, the same the OpenWrt 25.12 uses (3.0.5).
 FROM debian:bookworm-slim
 
 ARG UPX_VERSION=4.2.4
@@ -37,8 +33,7 @@ RUN curl -fsSL -o /tmp/upx.tar.xz \
  && upx --version
 
 # The apk-tools of Alpine: the static build, unpacked from the package of
-# them. The build of the package and of the index needs nothing but the
-# tools themselves — the database of apk is not touched by them.
+# them.
 RUN curl -fsSL -o /tmp/apk.apk \
       "$APK_URL/apk-tools-static-${APK_VERSION}-${APK_RELEASE}.apk" \
  && echo "${APK_SHA256}  /tmp/apk.apk" | sha256sum -c - \

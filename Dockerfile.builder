@@ -1,10 +1,6 @@
 # Builder image for building wg-portal from source.
 #
 #   docker build -f Dockerfile.builder -t wg-portal-builder:local <srcdir>
-#
-# The image contains the prebuilt frontend (vite -> internal/app/api/core/frontend-dist),
-# the downloaded Go modules and the sources, so every build variant compiles
-# without a repeated npm/go download.
 ARG NODE_IMAGE=node:lts-alpine
 ARG GO_IMAGE=golang:1.26-alpine
 

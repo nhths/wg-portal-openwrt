@@ -8,10 +8,6 @@
 #                        server interface, a client connects with the
 #                        configuration the portal hands out and pings through
 #                        the tunnel, and the guest pings the client back
-#
-# The setup of the guest is done by Ansible, with the same collection the LAN
-# router is converged with: its modules are ucode scripts, so the guest needs
-# no Python.
 set -euo pipefail
 
 MODE=${1:-wireguard}
@@ -58,9 +54,8 @@ PIDFILE=$VM/qemu.pid
 # packages of them from the host.
 FEED_PORT=${FEED_PORT:-18080}
 WGP_FEED_PORT=${WGP_FEED_PORT:-18081}
-# The public key of the feed of the portal. The index of the feed is signed
-# with it, and the guest trusts it: the key is the one of the project, the
-# same the router of the LAN trusts.
+# The public key of the feed of the portal: the index of the feed is signed
+# with it, and the guest trusts it.
 PUBKEY=${PUBKEY:-$ROOT/keys/wg-portal.pem}
 
 # The script needs root for the tap device, the WireGuard interface and the
@@ -231,7 +226,7 @@ else
   GUEST_PING="TUNNEL_PING=OK"
 fi
 
-	# --- the tunnel, from the client --------------------------------------------------------------
+# --- the tunnel, from the client --------------------------------------------------------------
 
 # The ping comes after the verification of the guest: the firewall of the
 # router has to know the tunnel interface before the client can reach the

@@ -1,6 +1,6 @@
 #!/bin/sh
-# The service is stopped and disabled before the files of the package go
-# away: the binary of it is gone by then.
+# The service is stopped before the files of the package go away: the binary
+# of it is gone by then.
 /etc/init.d/wg-portal stop
 /etc/init.d/wg-portal disable
 exit 0
