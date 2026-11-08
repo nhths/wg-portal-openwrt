@@ -67,20 +67,14 @@
         key_name: wg-portal.pem
 
     - name: Install the portal from the feed
+      # `state: latest` installs the portal when it is missing and upgrades it
+      # when the feed has a newer version — `apk add` alone leaves a package
+      # that is installed already alone.
       community.openwrt.apk:
         name: wg-portal
-        state: present
+        state: latest
         update_cache: true
       register: router_install
-
-    - name: Upgrade the portal when the feed has a newer version
-      # `apk add` does not upgrade a package that is installed already, and
-      # the module above does not touch it either — it asks apk about the
-      # package first and leaves it alone when it is there.
-      community.openwrt.command:
-        cmd: "apk upgrade wg-portal"
-      register: router_upgrade
-      changed_when: "'Upgrading' in router_upgrade.stdout"
 
     - name: Report the state of the portal and of its dependency
       community.openwrt.command:
@@ -146,42 +140,40 @@
           {{ portal_password.stdout | trim }}
       when: not portal_configured.stat.exists
 
-    - name: Read the port of the web interface of the portal
-      community.openwrt.command:
-        cmd: >-
-          sed -n 's/^[[:space:]]*listening_address:[[:space:]]*//p'
-          /etc/wg-portal/config.yaml
-      register: portal_listening
-      changed_when: false
+    - name: Read the configuration of the portal
+      community.openwrt.slurp:
+        src: /etc/wg-portal/config.yaml
+      register: portal_config
 
     - name: Take the port of the web interface of the portal
       ansible.builtin.set_fact:
         portal_port: >-
-          {{ (portal_listening.stdout | trim).split(':')[-1] | trim
-          | default(portal_web_port | string, true) }}
+          {{ (portal_config.content | b64decode | split('\n')
+              | map('trim') | select('search', 'listening_address:') | list | first
+              | default('', true) | split(':') | last | trim
+              | default(portal_web_port | string, true)) }}
 
-    - name: Read the port of the tunnel
-      community.openwrt.command:
-        cmd: >-
-          sed -n 's/^[[:space:]]*ListenPort[[:space:]]*=[[:space:]]*//p'
-          {{ tunnel_config_path }}/{{ tunnel_interface }}.conf 2>/dev/null || true
-        uses_shell: true
-      register: tunnel_listen
-      changed_when: false
+    - name: Look for the configuration of the tunnel
+      community.openwrt.stat:
+        path: "{{ tunnel_config_path }}/{{ tunnel_interface }}.conf"
+      register: tunnel_config_stat
 
-    - name: Read the network of the tunnel
-      community.openwrt.command:
-        cmd: >-
-          sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p'
-          {{ tunnel_config_path }}/{{ tunnel_interface }}.conf 2>/dev/null || true
-        uses_shell: true
-      register: tunnel_address
-      changed_when: false
+    - name: Read the configuration of the tunnel
+      community.openwrt.slurp:
+        src: "{{ tunnel_config_path }}/{{ tunnel_interface }}.conf"
+      register: tunnel_config
+      when: tunnel_config_stat.stat.exists
 
     - name: Take the port and the network of the tunnel
       ansible.builtin.set_fact:
-        tunnel_port: "{{ (tunnel_listen.stdout | trim) | default('', true) }}"
-        tunnel_network: "{{ (tunnel_address.stdout | trim) | default('', true) }}"
+        tunnel_port: >-
+          {{ (tunnel_config.content | default('') | b64decode | split('\n')
+              | map('trim') | select('search', '^ListenPort') | list | first
+              | default('', true) | split('=') | last | trim) }}
+        tunnel_network: >-
+          {{ (tunnel_config.content | default('') | b64decode | split('\n')
+              | map('trim') | select('search', '^Address') | list | first
+              | default('', true) | split('=') | last | trim) }}
 
     - name: Check that the port of the tunnel is the port of the play
       ansible.builtin.assert:
@@ -427,12 +419,16 @@
         state: reloaded
 
     - name: Look for the proxy of the router
-      community.openwrt.command:
-        cmd: "test -f /etc/init.d/podkop && test -f /etc/config/podkop"
-        uses_shell: true
-      register: podkop_present
-      changed_when: false
-      failed_when: false
+      community.openwrt.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/init.d/podkop
+        - /etc/config/podkop
+      register: podkop_files
+
+    - name: Check that the proxy of the router is there
+      ansible.builtin.set_fact:
+        podkop_present: "{{ podkop_files.results | map(attribute='stat.exists') | list | all }}"
 
     - name: Read the interfaces of the proxy of the router
       # The dns of the router answers with the fake addresses of the proxy, and
@@ -447,7 +443,7 @@
       register: podkop_interfaces
       changed_when: false
       failed_when: false
-      when: podkop_present.rc == 0
+      when: podkop_present | bool
 
     - name: Let the tunnel through the proxy of the router
       community.openwrt.uci:
@@ -460,14 +456,14 @@
           {{ (podkop_interfaces.result | default('', true)).split(' ')
           | select('ne', '') | list | union([tunnel_interface]) | join(' ') }}
       notify: Restart the proxy of the router
-      when: podkop_present.rc == 0
+      when: podkop_present | bool
 
     - name: Enable and start the portal
       # The postinst of the package only enables the service: an upgrade of
       # the package leaves the old binary running until it is restarted.
       community.openwrt.service:
         name: wg-portal
-        state: "{{ 'restarted' if (router_install.changed | default(false) or router_upgrade.changed | default(false)) else 'started' }}"
+        state: "{{ 'restarted' if router_install.changed | default(false) else 'started' }}"
         enabled: true
 
     - name: Wait for the portal to answer
@@ -482,14 +478,20 @@
 
     - name: Report the state of the portal
       community.openwrt.command:
-        cmd: "logread | tail -20; netstat -ltn; apk info wg-portal"
+        cmd: "logread | tail -20; netstat -ltn"
         uses_shell: true
       register: portal_state
       changed_when: false
 
+    - name: Gather the installed packages once more
+      community.openwrt.command:
+        cmd: "apk info wg-portal"
+      register: portal_version
+      changed_when: false
+
     - name: Report the state of the portal
       ansible.builtin.debug:
-        msg: "{{ portal_state.stdout }}"
+        msg: "{{ portal_state.stdout }}{{ portal_version.stdout }}"
 
   handlers:
     - name: Restart the proxy of the router

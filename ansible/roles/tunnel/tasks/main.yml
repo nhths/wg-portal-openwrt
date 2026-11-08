@@ -60,20 +60,24 @@
   when: tunnel_ping.rc != 0
 
 - name: Read the counters of the tunnel
-  community.openwrt.command:
-    cmd: >-
-      cat /sys/class/net/{{ wgp.interface }}/statistics/rx_bytes
-      /sys/class/net/{{ wgp.interface }}/statistics/tx_bytes
+  community.openwrt.slurp:
+    src: "/sys/class/net/{{ wgp.interface }}/statistics/{{ item }}_bytes"
+  loop:
+    - rx
+    - tx
   register: tunnel_counters
-  changed_when: false
 
 - name: Report the counters of the tunnel
   ansible.builtin.debug:
-    msg: "TUNNEL_TRAFFIC {{ tunnel_counters.stdout | default('') | replace('\n', ' ') }}"
+    msg: >-
+      TUNNEL_TRAFFIC
+      {{ tunnel_counters.results | map(attribute='content')
+         | map('b64decode') | map('trim') | join(' ') }}
 
 - name: Fail when the tunnel carries no traffic
   ansible.builtin.fail:
     msg: "the tunnel of {{ wgp.interface }} carries no traffic"
   when: >-
-    (tunnel_counters.stdout | default('') | split('\n') | map('trim') | select('ne', '')
-     | map('int') | select('gt', 0) | list | length) < 2
+    (tunnel_counters.results | map(attribute='content')
+     | map('b64decode') | map('trim') | map('int')
+     | select('gt', 0) | list | length) < 2

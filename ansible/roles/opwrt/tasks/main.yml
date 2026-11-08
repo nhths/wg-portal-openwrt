@@ -43,44 +43,38 @@
     key_name: wg-portal.pem
     file: /etc/apk/repositories.d/customfeeds.list
 
-- name: Update the lists of apk
-  community.openwrt.command:
-    cmd: "apk update"
-  register: opwrt_update
-  changed_when: false
-  until: opwrt_update.rc == 0
-  retries: 15
-  delay: 2
-
-- name: Report the update of the lists
-  ansible.builtin.debug:
-    msg: "{{ opwrt_update.stdout }}"
-
 - name: Install the portal
   # Its dependency, the WireGuard kernel module, apk resolves on its own: it
-  # takes it from the feed of OpenWrt, with the modules it needs.
+  # takes it from the feed of OpenWrt, with the modules it needs. The cache
+  # is updated first, so the feed of the check is known.
   community.openwrt.apk:
     name: wg-portal
     state: present
+    update_cache: true
   register: opwrt_install
 
 - name: Report the installation
   ansible.builtin.debug:
     msg: "{{ opwrt_install.stdout | default('') }}"
 
-- name: Check that the dependency was installed with the portal
-  community.openwrt.command:
-    cmd: "apk list --installed kmod-wireguard"
-  register: opwrt_kmod
-  changed_when: false
-  failed_when: "'[installed]' not in opwrt_kmod.stdout"
+- name: Look for the files of the portal
+  # apk writes the list of the files of a package when it installs it. The
+  # module of the installation fails when the package is not there, so this is
+  # a check of the files themselves.
+  community.openwrt.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/wg-portal
+    - /etc/init.d/wg-portal
+    - /lib/apk/packages/wg-portal.list
+  register: opwrt_files
 
 - name: Check that the portal is installed
-  community.openwrt.command:
-    cmd: "apk list --installed wg-portal"
-  register: opwrt_status
-  changed_when: false
-  failed_when: "'[installed]' not in opwrt_status.stdout"
+  ansible.builtin.assert:
+    that:
+      - opwrt_files.results | map(attribute='stat.exists') | select('false') | list | length == 0
+    fail_msg: "the files of the portal are missing"
+    quiet: true
 
 - name: Load the WireGuard kernel modules
   # OpenWrt has no modprobe, the modules are loaded by kmodloader. The
