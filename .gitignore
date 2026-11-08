@@ -4,3 +4,6 @@ dist/
 
 # The cache of Ansible: the collection and the roles it downloads.
 .ansible/
+
+# The cache of Python.
+__pycache__/

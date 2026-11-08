@@ -93,7 +93,7 @@ lint: ## Run shellcheck, ansible-lint and markdownlint
 	  && ansible-lint ansible/ \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/site.yml \
 	  && ansible-playbook -i ansible/inventory.ini --syntax-check ansible/router.yml \
-	  && markdownlint --config .markdownlint.json README.md AGENTS.md wg-portal-upx-ipk-bench.md'
+	  && markdownlint --config .markdownlint.json README.md AGENTS.md'
 
 clean: ## Remove the build artifacts
 	rm -rf $(DIST)
