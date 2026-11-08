@@ -217,6 +217,15 @@
           the tunnel listens on the port {{ tunnel_port | default('unknown', true) }},
           the network of it is {{ tunnel_network | default('unknown', true) }}
 
+    - name: Check that the network of the tunnel is known
+      ansible.builtin.assert:
+        that:
+          - tunnel_network != ""
+        fail_msg: >-
+          the network of the tunnel is not in the configuration of its
+          interface — the firewall cannot be told where the peers are
+        quiet: true
+
     - name: Put the tunnel into the firewall
       # The zone names the device, not a network: the interface of the tunnel
       # is created by the portal itself and is not in /etc/config/network.
@@ -237,6 +246,17 @@
             key: "firewall.{{ tunnel_zone }}.device"
             value: "{{ tunnel_interface }}"
             unique: true
+
+    - name: Tell the firewall the network of the tunnel
+      # The zone names the device, not a network: the interface of the tunnel
+      # is created by the portal itself and is not in /etc/config/network.
+      # Without the network fw4 does not know the addresses of the peers.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: set
+            key: "firewall.{{ tunnel_zone }}.subnet"
+            value: "{{ tunnel_network }}"
 
     - name: Let the tunnel and the lan talk to each other
       community.openwrt.uci:
@@ -314,31 +334,37 @@
         | batch(redirect_fields | length) | list }}
 
     - name: Let the tunnel reach the services of the public address
-      # The public address of the router is the address of the services of the
-      # gateway. fw4 redirects the traffic of the wan zone to them, and
-      # reflects it for the lan, but the traffic of the tunnel is delivered to
-      # the router itself: the router answers it with the certificate of its
-      # own web interface. The same redirects for the tunnel zone fix that.
+      # fw4 builds the rules of the hairpin on its own: the traffic of the lan
+      # to the public address of the router is redirected to the gate. The zone
+      # of the tunnel wants the same, and the reflection of the redirect gives
+      # it to the zone of the tunnel. A redirect of the zone of the tunnel on
+      # its own would match by the port alone, and then every request of the
+      # peers would go to the gate.
       community.openwrt.uci:
         autocommit: false
         operations:
           - command: ensure
             config: firewall
             type: redirect
-            name: "{{ item.name }}_{{ tunnel_zone }}"
             find:
-              name: "{{ item.name }}_{{ tunnel_zone }}"
+              name: "{{ item.name }}"
             value:
-              name: "{{ item.name }}_{{ tunnel_zone }}"
-              src: "{{ tunnel_zone }}"
-              dest: "{{ item.dest }}"
-              dest_ip: "{{ item.dest_ip }}"
-              dest_port: "{{ item.dest_port }}"
-              src_dport: "{{ item.src_dport }}"
-              target: DNAT
+              reflection_zone: "{{ item.dest }} {{ tunnel_zone }}"
       loop: "{{ public_redirects | default([]) }}"
       loop_control:
         label: "{{ item.name | default('?') }}"
+
+    - name: Take the redirects of the tunnel away
+      # The older version of the play made a redirect of its own for the zone
+      # of the tunnel, and that one matched by the port alone.
+      community.openwrt.uci:
+        autocommit: false
+        command: delete
+        key: "firewall.{{ item.name }}_{{ tunnel_zone }}"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+      failed_when: false
 
     - name: Masquerade the traffic that leaves to the internet
       # The zone of the wan masquerades the traffic that leaves through it. A
