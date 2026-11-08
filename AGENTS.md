@@ -725,18 +725,38 @@ and it is checked against the port the portal writes for the interface.
 
 The public address of the router is the address of the services of the
 gateway, and the firewall of the router redirects the traffic of the wan
-zone to them. The traffic of the tunnel is not redirected: it is delivered
-to the router itself, and the router answers it with the certificate of its
-own web interface (uhttpd, the OpenWrt one) instead of the certificate of
-the gateway. The play copies the redirects of the wan zone for the zone of
-the tunnel — the peers reach the services of the gateway the same way the
-internet does.
+zone to them. The traffic of the tunnel is not redirected by that: it is
+delivered to the router itself, and the router answers it with the
+certificate of its own web interface (uhttpd, the OpenWrt one) instead of
+the certificate of the gateway.
 
-fw4 reflects the redirects for the lan as well: the clients of the lan reach
-the public address of the router through the gateway too, and the traffic is
-masqueraded to the lan address of the router on the way back. The reflection
-matches the network of the lan only, so the peers of the tunnel are not
-covered by it.
+fw4 builds the rules of the hairpin of the lan on its own: the clients of
+the lan reach the public address of the router through the gateway too, and
+the traffic is masqueraded to the lan address of the router on the way
+back. Those rules match the network of the lan, so the peers of the tunnel
+are not covered by them — and a redirect of the zone of the tunnel on its
+own would match by the port alone, and then every request of the peers
+would go to the gateway, the traffic to the other sites and to the gateway
+alike.
+
+The play puts the zone of the tunnel into the reflection of the redirects of
+the wan zone (`reflection_zone`), and it gives the zone of the tunnel the
+network of the interface (`option subnet`) — fw4 needs the addresses of the
+peers for the rules of the reflection. The rules of the tunnel are then the
+rules of the hairpin of the lan, and they match the public address of the
+router as well:
+
+```text
+chain dstnat_wg {
+        ip saddr 172.26.0.0/24 ip daddr 94.19.182.96 tcp dport 443 dnat 192.168.31.98:443
+}
+```
+
+The masquerade of the way back is a rule of its own (`<name>_wg_snat`): the
+rules of the reflection masquerade the traffic to the lan address of the
+router, but they land in the chain of the zone of the tunnel — and the
+traffic of the peers leaves through the lan, so they never apply to it. The
+rule of the play does it for the peers: the gateway answers to the router.
 
 ### The proxy of the router
 

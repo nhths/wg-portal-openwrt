@@ -149,10 +149,18 @@ and goes to the internet as it is.
 
 The public address of the router is the address of the services of the
 gateway: the firewall of the router redirects the traffic of the wan zone to
-them. The play makes the same redirects for the tunnel — otherwise the
-traffic of the peers to the public address is delivered to the router itself,
-and the router answers it with the certificate of its own web interface
-instead of the certificate of the gateway.
+them. The traffic of the peers has to reach them as well — otherwise it is
+delivered to the router itself, and the router answers it with the
+certificate of its own web interface instead of the certificate of the
+gateway.
+
+The play does it the way fw4 builds the hairpin of the lan: the redirects of
+the wan zone get the zone of the tunnel in `reflection_zone`, and the zone of
+the tunnel gets the network of the interface. The rules of the tunnel are
+then the rules of the hairpin, and they match the public address of the
+router as well — the traffic of the peers to the other sites is left alone.
+A redirect of the zone of the tunnel on its own would match by the port
+alone, and then every request of the peers would go to the gateway.
 
 The portal owns the configuration of itself: the play writes it only when
 there is none, and it never touches the password of the administrator
@@ -183,8 +191,13 @@ is not in `/etc/config/network`):
 config zone
         option name 'wg'
         list device 'wg0'
+        option subnet '172.26.0.0/24'
         option input 'ACCEPT'
 ```
+
+The `subnet` is the network of the interface of the tunnel — the addresses of
+the peers. fw4 needs them for the rules of the reflection: without them the
+rules of the tunnel match the traffic of the peers by the port alone.
 
 The traffic of the peers is masqueraded by the zone of the wan
 (`option masq '1'`) — the zone masquerades the traffic that leaves through

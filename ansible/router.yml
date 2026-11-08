@@ -354,6 +354,34 @@
       loop_control:
         label: "{{ item.name | default('?') }}"
 
+    - name: Masquerade the traffic of the tunnel to the gateway
+      # The rules of the reflection masquerade the traffic back to the lan
+      # address of the router — for the lan. The rules of the zone of the
+      # tunnel land in the chain of that zone, and the traffic of the peers
+      # leaves through the lan, so they never apply to it. The rule of its
+      # own does the same for the peers: the gateway answers to the router.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: redirect
+            name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+            find:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+            value:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+              src: "{{ tunnel_zone }}"
+              dest: "{{ item.dest }}"
+              dest_ip: "{{ item.dest_ip }}"
+              dest_port: "{{ item.dest_port }}"
+              src_ip: "{{ tunnel_network }}"
+              src_dip: "{{ router_address }}"
+              target: SNAT
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
     - name: Take the redirects of the tunnel away
       # The older version of the play made a redirect of its own for the zone
       # of the tunnel, and that one matched by the port alone.
