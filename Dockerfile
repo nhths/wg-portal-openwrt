@@ -31,7 +31,7 @@ WORKDIR /opt/wg-portal
 # needs no Python.
 COPY ansible/requirements.yml /tmp/requirements.yml
 RUN python3 -m venv /opt/venv \
- && /opt/venv/bin/pip install --no-cache-dir "ansible-core>=2.16,<2.19" \
+ && /opt/venv/bin/pip install --no-cache-dir "ansible-core>=2.19,<2.23" \
  && /opt/venv/bin/ansible-galaxy collection install \
       -p /usr/share/ansible/collections -r /tmp/requirements.yml \
  && rm /tmp/requirements.yml

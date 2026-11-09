@@ -69,7 +69,8 @@ is, and why the play has the steps it has.
 - `apk add` does not upgrade a package that is installed already, and the module
   `community.openwrt.apk` with `state: present` does not upgrade either — it asks apk about the
   package first and does nothing when it is there. `state: latest` (community.openwrt 1.11.0 and
-  later) installs the package and upgrades it when the feed has a newer version.
+  later) installs the package and upgrades it when the feed has a newer version. The collection
+  needs ansible-core 2.19 and later — the image of the check carries it.
 - The scripts of a package are run by apk with an environment of its own and nothing else:
   `APK_PACKAGE`, `APK_SCRIPT`, `PATH` and `PWD`. `IPKG_INSTROOT` — the variable of opkg, the one the
   scripts of OpenWrt use — is **not** set by apk. OpenWrt has its own hooks for its packages:
@@ -265,19 +266,19 @@ itself, and the ping of the portal to its peers fails for that reason.
 ## The workflow of the release
 
 `.github/workflows/wg-portal-release.yml` is a GitHub Actions workflow. Every two weeks (the 1st and
-the 15th of the month) it looks for a new release of the portal (`h44z/wg-portal`). If there is one,
-it builds the package, checks it in the emulated OpenWrt — the same check as `make check-wireguard` —
-and publishes the `.apk` as a release of the repository. The state of the workflow is the release
-itself: if the version of the portal is already released here, the run does nothing. The tag of the
-release is the version of the package. The workflow signs the package and the index with the secret
-key from the secrets of the repository (`APK_SECRET_KEY`) and checks the signature of the index
-against the public key of the repository afterwards — a secret that does not belong to that key fails
-the release. Two things to know about the scheduled runs: GitHub delays them (a run can start an hour
-after its time), and it stops them altogether if the repository has no activity for 60 days — a commit
-or a manual run brings them back. A workflow that is added in the **first push** of a new repository
-is not indexed by GitHub (the repository is still being provisioned): the file is there, but it is not
-in the list of the workflows. Any change of the file fixes it — that is why the workflow has a `push`
-trigger on its own path.
+the 15th of the month) and on every commit to master it looks for a new release of the portal
+(`h44z/wg-portal`). If there is one, it builds the package, checks it in the emulated OpenWrt — the
+same check as `make check-wireguard` — and publishes the `.apk` as a release of the repository. The
+state of the workflow is the release itself: if the version of the portal is already released here,
+the run does nothing. The tag of the release is the version of the package. The workflow signs the
+package and the index with the secret key from the secrets of the repository (`APK_SECRET_KEY`) and
+checks the signature of the index against the public key of the repository afterwards — a secret that
+does not belong to that key fails the release. Two things to know about the scheduled runs: GitHub
+delays them (a run can start an hour after its time), and it stops them altogether if the repository
+has no activity for 60 days — a commit or a manual run brings them back. A workflow that is added in
+the **first push** of a new repository is not indexed by GitHub (the repository is still being
+provisioned): the file is there, but it is not in the list of the workflows. Any commit to master
+fixes it — the workflow runs on every one of them.
 
 ## The gaps and the caveats
 

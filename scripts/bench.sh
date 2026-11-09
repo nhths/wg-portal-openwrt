@@ -19,9 +19,9 @@ DIST=${DIST:-$ROOT/dist}
 mkdir -p "$VM"
 cd "$VM"
 
-[ -f vmlinuz-virt ] || curl -fsSL -O \
+[ -f vmlinuz-virt ] || curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O \
   "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_SERIES}/releases/aarch64/netboot/vmlinuz-virt"
-[ -f "alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz" ] || curl -fsSL -O \
+[ -f "alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz" ] || curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O \
   "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_SERIES}/releases/aarch64/alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz"
 
 echo "=== building the guest initramfs"
