@@ -32,10 +32,16 @@ cd "$W"
 
 if [ ! -f wg-portal.orig ]; then
   echo "=== downloading the release binary"
-  curl -fL -o wg-portal.orig "$REPO/$VER/wg-portal_linux_arm64"
+  # The CDN of the releases of GitHub answers with a 504 now and then: the
+  # download is repeated before the build gives up.
+  curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+    -o wg-portal.orig "$REPO/$VER/wg-portal_linux_arm64"
 fi
 chmod +x wg-portal.orig
 file wg-portal.orig
+# A download that was cut short leaves a file that is not the binary.
+file wg-portal.orig | grep -q 'ARM aarch64' \
+  || { echo "wg-portal.orig is not an aarch64 ELF" >&2; exit 1; }
 
 # --- the packing ------------------------------------------------------------------
 
