@@ -131,20 +131,18 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.portal.outputs.version }}"
-          # The WireGuard part of the check needs a tun device, and not every
-          # runner has it: the install check is made instead, and the tunnel is
-          # not.
-          mode=wireguard
-          devices=()
-          if [ -e /dev/net/tun ]; then
-            devices=(--device /dev/net/tun)
-          else
-            mode=install
+          # The check needs a tun device: the guest talks to the host through
+          # it, and the feeds of the packages come over it. A runner without
+          # the device cannot make the check at all — the release is published
+          # anyway, and the notes of it say that the check was not made.
+          if [ ! -e /dev/net/tun ]; then
+            echo "the runner has no tun device: the check of the package is not made" >&2
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "the check of the package: $mode"
-          docker run --rm "${devices[@]}" --cap-add NET_ADMIN --cap-add NET_RAW \
-            "wg-portal-check:$version" "$mode"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
+            "wg-portal-check:$version" wireguard
+          echo "mode=wireguard" >> "$GITHUB_OUTPUT"
 
       - name: Write the notes of the release
         if: steps.state.outputs.build == 'true'
@@ -203,9 +201,8 @@ jobs:
               echo "Checked in the emulated OpenWrt: apk installs the package with the module,"
               echo "the portal answers and a WireGuard tunnel through it works."
             else
-              echo "Checked in the emulated OpenWrt: apk installs the package with the module"
-              echo "and the portal answers. The runner had no tun device, so the tunnel was not"
-              echo "made there."
+              echo "Not checked in the emulated OpenWrt: the runner that built this release had"
+              echo "no tun device, and the check needs it."
             fi
           } > "$RUNNER_TEMP/notes.md"
 
