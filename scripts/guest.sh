@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 # The emulated router: the OpenWrt guest and the machine it runs on.
 #
-# One script, five steps:
-#
-#   fetch      download the rootfs, the kernel and the kernel modules
-#   bootstrap  the key Ansible logs in with
-#   packages   collect the .ipk of the portal and the feed of the modules
-#   flash      build the 128 MB flash of the router
-#   boot       create the tap, start QEMU and wait for the guest
-#
-# The step is the first argument:
-#
 #   guest.sh fetch      <dir>
 #   guest.sh bootstrap  <rootfs-dir> <key-file>
 #   guest.sh packages   <dist-dir> <target-dir> <kernel-modules-dir> <feed-dir>
@@ -18,20 +8,22 @@
 #   guest.sh boot       <flash-image> <kernel> <tap> <console> <pidfile>
 set -euo pipefail
 
-OW_REL=${OW_REL:-24.10.8}
+OW_REL=${OW_REL:-25.12.6}
 BASE_URL=${BASE_URL:-https://downloads.openwrt.org}
 OW_TARGET=$BASE_URL/releases/$OW_REL/targets/armsr/armv8
 OW_IMG=openwrt-${OW_REL}-armsr-armv8-generic-ext4-rootfs.img
 OW_KERNEL=openwrt-${OW_REL}-armsr-armv8-generic-kernel.bin
 
 # The WireGuard kernel module and the crypto modules it needs are not part of
-# the image, they come from the OpenWrt repository.
+# the image, they come from the OpenWrt repository. The name of a package of
+# apk v3 is its name and its version: kmod-wireguard-6.12.112-r1.apk.
 KMOD_PACKAGES=(
   kmod-wireguard
   kmod-crypto-lib-curve25519
   kmod-crypto-lib-chacha20poly1305
   kmod-crypto-lib-poly1305
   kmod-crypto-lib-chacha20
+  kmod-crypto-hash
   kmod-crypto-kpp
   kmod-udptunnel4
   kmod-udptunnel6
@@ -50,6 +42,15 @@ SUDO=""
 
 # --- the pieces of the guest ---------------------------------------------------
 
+# The download of a file: HTTP/1.1 (the streams of HTTP/2 are reset by the
+# mirrors from time to time), with retries, and resumed from where it stopped
+# — a file that is fetched over a long line gets cut in the middle.
+curl_get() {
+  local url=$1 dest=$2
+  curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 2 \
+    -C - -o "$dest" "$url"
+}
+
 fetch() {
   local dest=$1
   mkdir -p "$dest/pkgs"
@@ -58,7 +59,7 @@ fetch() {
   if [ ! -d rootfs ]; then
     if [ ! -f rootfs.img ]; then
       echo "=== downloading the OpenWrt rootfs"
-      curl -fsSL -O "$OW_TARGET/${OW_IMG}.gz"
+      curl_get "$OW_TARGET/${OW_IMG}.gz" "${OW_IMG}.gz"
       gunzip -f "${OW_IMG}.gz"
       mv -f "$OW_IMG" rootfs.img
     fi
@@ -68,33 +69,34 @@ fetch() {
     # debugfs extracts as root, and the guest is written to by the check.
     $SUDO chown -R "$(id -u):$(id -g)" rootfs
   fi
-  [ -f kernel.bin ] || curl -fsSL -o kernel.bin "$OW_TARGET/$OW_KERNEL"
+  [ -f kernel.bin ] || curl_get "$OW_TARGET/$OW_KERNEL" kernel.bin
 
-  local modver kdir index pkg file
+  local modver kdir index pkg file version
   modver=$(ls rootfs/lib/modules | head -1)
   echo "=== kernel modules for $modver"
   kdir=$(curl -fsSL "$OW_TARGET/kmods/" | grep -oE "href=\"$modver-[^\"]+/\"" | head -1 | cut -d'"' -f2 | tr -d /)
   [ -n "$kdir" ] || { echo "no kernel module directory for $modver" >&2; exit 1; }
-  index=$OW_TARGET/kmods/$kdir/Packages
-  [ -f pkgs/Packages ] || curl -fsSL -o pkgs/Packages "$index"
-  # The signature of the index: opkg checks it against the keys of the
-  # firmware, so the feed has to carry it.
-  [ -f pkgs/Packages.sig ] || curl -fsSL -o pkgs/Packages.sig "$index.sig"
+  index=$OW_TARGET/kmods/$kdir
+
+  # The index of the feed of the modules is signed with the key of the
+  # firmware, and the guest trusts that key out of the box.
+  [ -f pkgs/packages.adb ] || curl_get "$index/packages.adb" pkgs/packages.adb
+  [ -f pkgs/index.json ] || curl_get "$index/index.json" pkgs/index.json
+
   for pkg in "${KMOD_PACKAGES[@]}"; do
-    file=$(awk -v p="$pkg" '$1 == "Package:" && $2 == p {hit = 1} hit && $1 == "Filename:" {print $2; exit}' pkgs/Packages)
-    [ -n "$file" ] || { echo "package $pkg not found in $index" >&2; exit 1; }
-    [ -f "pkgs/$file" ] || curl -fsSL -o "pkgs/$file" "$OW_TARGET/kmods/$kdir/$file"
+    version=$(grep -o "\"$pkg\": \"[^\"]*\"" pkgs/index.json | head -1 | sed 's/.*: "\(.*\)"/\1/')
+    [ -n "$version" ] || { echo "package $pkg not found in $index" >&2; exit 1; }
+    file=$pkg-$version.apk
+    [ -f "pkgs/$file" ] || curl_get "$index/$file" "pkgs/$file"
   done
   ls -l pkgs
 }
 
 # --- the guest for Ansible ------------------------------------------------------
 
-# The setup of the guest is done by Ansible over SSH, so the guest has to be
-# reachable before Ansible can start. The key Ansible logs in with is baked
-# into the flash for that; the network of the guest is written into the
-# rootfs by the play (templates/openwrt/network.j2), because it has to be in
-# the flash before the router boots.
+# The network of the guest is written into the rootfs by the play
+# (templates/openwrt/network.j2): it has to be in the flash before the router
+# boots, because Ansible needs SSH to get into the guest at all.
 bootstrap() {
   local rootfs=$1 key=$2
 
@@ -104,51 +106,52 @@ bootstrap() {
   fi
 
   mkdir -p "$rootfs/etc/dropbear"
+  # A file left over by a run as root is not writable by the user of the
+  # host, and the copy over it fails.
+  rm -f "$rootfs/etc/dropbear/authorized_keys"
   cp "$key.pub" "$rootfs/etc/dropbear/authorized_keys"
   chmod 600 "$rootfs/etc/dropbear/authorized_keys"
 }
 
 # --- the packages of the guest ---------------------------------------------------
 
-# The feed of the kernel modules: the packages and the index that describes
-# them. The portal depends on kmod-wireguard, and opkg has to resolve that
-# dependency on its own — the way it does on the router, where the modules
-# come from the feed of the firmware.
-#
-# opkg knows no file:// url, so the feed is served over HTTP by the host: the
-# guest fetches the index and the packages from it. The index is the one of
-# the repository, with its signature: opkg checks the signature against the
-# keys of the firmware, and the index of a feed that opkg cannot verify is no
-# index at all.
+# The feed of the kernel modules and the feed of the portal. apk knows no
+# file:// url, so the feeds are served over HTTP by the host: the guest
+# fetches the index and the packages from them. The url of a feed is the url
+# of its index — a url that ends with ".adb" is taken as it is, and the
+# packages of the feed are taken from the same directory by their name.
 packages() {
   local dist=$1 kmods=$2 feed=$3 wgpfeed=$4
 
   mkdir -p "$feed" "$wgpfeed"
+  # A directory left over by a run as root is not writable by the user of
+  # the host, and the copies into it fail.
+  $SUDO chown -R "$(id -u):$(id -g)" "$feed" "$wgpfeed"
 
-  local ipk pkg file
-  ipk=$(ls "$dist"/wg-portal_*.ipk 2>/dev/null | head -1)
-  [ -n "$ipk" ] || { echo "no .ipk in $dist — run 'make dist' first" >&2; exit 1; }
-  # The package of the feed of the portal: the name of it is the one of the
-  # index, opkg fetches it by that name.
-  cp "$ipk" "$wgpfeed/"
+  local apk pkg file
+  apk=$(ls "$dist"/wg-portal-*.apk 2>/dev/null | head -1)
+  [ -n "$apk" ] || { echo "no .apk in $dist — run 'make dist' first" >&2; exit 1; }
+  cp "$apk" "$wgpfeed/"
+  [ -f "$dist/packages.adb" ] || { echo "no index in $dist — run 'make feed' first" >&2; exit 1; }
+  cp "$dist/packages.adb" "$wgpfeed/packages.adb"
 
   for pkg in "${KMOD_PACKAGES[@]}"; do
-    file=$(ls "$kmods/$pkg"_*.ipk 2>/dev/null | head -1)
+    # The name of a package of apk v3 is its name and its version:
+    # kmod-wireguard-6.12.112-r1.apk
+    file=$(ls "$kmods/$pkg"-*.apk 2>/dev/null | head -1)
     [ -n "$file" ] || { echo "the package $pkg is missing in $kmods" >&2; exit 1; }
     cp "$file" "$feed/"
   done
 
-  cp "$kmods/Packages" "$feed/Packages"
-  cp "$kmods/Packages.sig" "$feed/Packages.sig"
+  cp "$kmods/packages.adb" "$feed/packages.adb"
 
   ls -l "$feed" "$wgpfeed"
 }
 
 # --- the flash of the router ------------------------------------------------------
 
-# The router equivalent is 128 MB of flash and 512 MB of RAM. The image is
-# attached as a virtio disk and the guest boots from it directly, so the rootfs
-# lives on the flash and does not eat the RAM (as it would in an initramfs).
+# The rootfs lives on the flash and does not eat the RAM (as it would in an
+# initramfs).
 flash() {
   local rootfs=$1 image=$2 size=${3:-128}
 
@@ -179,6 +182,9 @@ boot() {
   $SUDO ethtool -K "$tap" tso off gso off gro off tx off sg off 2>/dev/null || true
 
   echo "=== booting $QEMU with the OpenWrt rootfs"
+  # A console or a pid file left over by a run as root is not writable by
+  # the user of the host, and the boot fails on them.
+  rm -f "$console" "$pidfile"
   timeout "$BOOT_TIMEOUT" "$QEMU" \
     -M virt -cpu cortex-a53 -m "$MEM_MB" -nographic -no-reboot \
     -kernel "$kernel" \
@@ -189,9 +195,8 @@ boot() {
     < /dev/null > "$console" 2>&1 &
   echo $! > "$pidfile"
 
-  # Ansible needs the guest to be up: the boot of OpenWrt under the emulation
-  # takes a while, and a host that does not answer yet is "unreachable" for
-  # ansible, not "failed" — it does not retry.
+  # A host that does not answer yet is "unreachable" for ansible, not
+  # "failed" — it does not retry. So the boot is waited for here.
   echo "=== waiting for the guest"
   local i=0
   until (exec 3<>/dev/tcp/"$LINK_GUEST"/22) 2>/dev/null; do
@@ -207,7 +212,7 @@ boot() {
 case "${1:-}" in
   fetch) fetch "${2:?the target directory}" ;;
   bootstrap) bootstrap "${2:?the rootfs directory}" "${3:?the key file}" ;;
-  packages) packages "${2:?the directory with the .ipk of the portal}" "${3:?the directory with the kernel module packages}" "${4:?the directory of the feed of the modules}" "${5:?the directory of the feed of the portal}" ;;
+  packages) packages "${2:?the directory with the .apk of the portal}" "${3:?the directory with the kernel module packages}" "${4:?the directory of the feed of the modules}" "${5:?the directory of the feed of the portal}" ;;
   flash) flash "${2:?the rootfs directory}" "${3:?the image to create}" "${4:-128}" ;;
   boot) boot "${2:?the flash image}" "${3:?the kernel}" "${4:?the tap device}" "${5:?the console file}" "${6:?the pid file}" ;;
   *)

@@ -1,37 +1,44 @@
 ---
-# The checks of the installation of the package: what opkg made of it, the
+# The checks of the installation of the package: what apk made of it, the
 # service it enabled, the binary that answers HTTP — and that the package can
 # be taken away again and installed once more.
-- name: Read the status of the package
-  community.openwrt.command:
-    cmd: "opkg status wg-portal"
-  register: package_status
-  changed_when: false
-
-- name: Report the status of the package
-  ansible.builtin.debug:
-    msg: "{{ package_status.stdout }}"
-
-- name: Read the files of the package
-  community.openwrt.command:
-    cmd: "opkg files wg-portal"
+- name: Look for the files of the package
+  # The list of the files is written by apk when the package is installed, and
+  # taken away with it. Its presence is the presence of the package.
+  community.openwrt.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/wg-portal
+    - /etc/init.d/wg-portal
+    - /lib/apk/packages/wg-portal.list
   register: package_files
-  changed_when: false
 
 - name: Report the files of the package
   ansible.builtin.debug:
-    msg: "{{ package_files.stdout }}"
+    msg: >-
+      {{ package_files.results | map(attribute='stat')
+         | selectattr('exists') | map(attribute='path') | list }}
 
-- name: Read the services of the package
-  community.openwrt.command:
-    cmd: "ls -l /etc/rc.d/ | grep wg-portal || true"
-    uses_shell: true
+- name: Check that the package is installed
+  ansible.builtin.assert:
+    that:
+      - package_files.results | map(attribute='stat.exists') | select('false') | list | length == 0
+    fail_msg: "the files of the package are missing"
+    quiet: true
+
+- name: Read the links of the service
+  community.openwrt.stat:
+    path: "/etc/rc.d/{{ item }}"
+  loop:
+    - K01wg-portal
+    - S99wg-portal
   register: package_services
-  changed_when: false
 
-- name: Report the services of the package
+- name: Report the links of the service
   ansible.builtin.debug:
-    msg: "{{ package_services.stdout }}"
+    msg: >-
+      {{ package_services.results | map(attribute='stat')
+         | selectattr('exists') | map(attribute='path') | list }}
 
 - name: Wait for the portal to answer
   community.openwrt.command:
@@ -53,34 +60,35 @@
     msg: "{{ package_memory.stdout }}"
 
 - name: Remove the package
-  community.openwrt.opkg:
+  community.openwrt.apk:
     name: wg-portal
     state: absent
 
-- name: Check that the package is gone
-  community.openwrt.command:
-    cmd: "opkg status wg-portal"
+- name: Look for the files of the package again
+  community.openwrt.stat:
+    path: /lib/apk/packages/wg-portal.list
   register: package_removed
-  changed_when: false
-  failed_when: package_removed.stdout | trim != ''
+
+- name: Check that the package is gone
+  ansible.builtin.assert:
+    that:
+      - not package_removed.stat.exists
+    fail_msg: "the package is still installed"
+    quiet: true
 
 - name: Install the package again
-  # The package is in the feed of this project: opkg takes it from there
-  # again, by its name, and checks the signature of the index of the feed.
-  community.openwrt.command:
-    cmd: "opkg install wg-portal"
-  changed_when: false
-  register: package_reinstall
+  community.openwrt.apk:
+    name: wg-portal
+    state: present
 
-- name: Read the status of the package again
-  community.openwrt.command:
-    cmd: "opkg status wg-portal"
-  register: package_reinstalled
-  changed_when: false
+- name: Look for the files of the package once more
+  community.openwrt.stat:
+    path: /lib/apk/packages/wg-portal.list
+  register: package_again
 
 - name: Check that the package is installed again
   ansible.builtin.assert:
     that:
-      - "'Status: install user installed' in package_reinstalled.stdout"
-    fail_msg: "the package was not installed again"
+      - package_again.stat.exists
+    fail_msg: "the package is not installed"
     quiet: true

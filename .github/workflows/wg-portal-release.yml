@@ -1,16 +1,15 @@
-# The release of the .ipk package for wg-portal.
+# The release of the .apk package for wg-portal.
 #
 # Every two weeks the workflow looks for a new release of the portal
-# (h44z/wg-portal). If there is one, it builds the package for the router
-# (the binary packed with UPX), checks it in the emulated OpenWrt — the
-# package is installed there and a real WireGuard tunnel is made through it —
-# and publishes the .ipk as a release of this repository.
+# (h44z/wg-portal). If there is one, it builds the package for the router,
+# checks it in the emulated OpenWrt and publishes the .apk as a release of
+# this repository.
+#
+# The version of the release is four numbers: the three of the version of the
+# portal and the fourth one is the revision of the packaging.
 #
 # The state of the workflow is the release itself: if the version of the
 # portal is already released here, the run does nothing.
-#
-# The workflow runs the code of this repository, so the GitHub copy of the
-# project is the one the Actions run in.
 name: wg-portal release
 
 on:
@@ -69,38 +68,36 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.portal.outputs.version }}"
+          # The tag of a release here is the version of the portal and the
+          # revision of the packaging: the three first numbers of it are the
+          # ones of the portal.
           latest=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" | jq -r .tag_name || true)
           echo "the latest release here: ${latest:-none}"
-          if [ "$latest" = "$version" ] || gh release view "$version" >/dev/null 2>&1; then
+          if [ "${latest%.*}" = "${version#v}" ]; then
             echo "the version $version is already released here — nothing to do"
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build the package and the image of the check
-        # The image bakes the package in, so it is built after it.
-        if: steps.state.outputs.build == 'true'
-        run: make image VER="${{ steps.portal.outputs.version }}"
-
-      - name: Sign the feed of the portal
-        # The index of the feed is signed with the key of the project: the
-        # secret of it is in the secrets of the repository, the public key is
-        # in it (keys/wg-portal.pub).
+      - name: Write the secret key of the feed
+        # The package and the index of the feed are signed with it: apk
+        # installs nothing whose signature it cannot check.
         if: steps.state.outputs.build == 'true'
         env:
-          SECRET_KEY: ${{ secrets.OPKG_SECRET_KEY }}
+          SECRET_KEY: ${{ secrets.APK_SECRET_KEY }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$SECRET_KEY" > "$RUNNER_TEMP/secret.key"
-          chmod 600 "$RUNNER_TEMP/secret.key"
-          # The index is built from the package that is already in dist/ — the
-          # one the check image has baked in. 'make feed' would rebuild the
-          # package, and the released .ipk would not be the one that was
-          # checked byte for byte.
-          make feed-index
-          make feed-sign SECRET_KEY="$RUNNER_TEMP/secret.key"
+          printf '%s\n' "$SECRET_KEY" > "$RUNNER_TEMP/secret.pem"
+          chmod 600 "$RUNNER_TEMP/secret.pem"
+
+      - name: Build the package and the index of the feed
+        if: steps.state.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          make dist VER="${{ steps.portal.outputs.version }}" SECRET_KEY="$RUNNER_TEMP/secret.pem"
+          make feed VER="${{ steps.portal.outputs.version }}" SECRET_KEY="$RUNNER_TEMP/secret.pem"
 
       - name: Check the signature of the feed
         # The signature of the index has to be made with the key whose public
@@ -109,8 +106,14 @@ jobs:
         if: steps.state.outputs.build == 'true'
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD/dist:/w" wg-portal-usign \
-            -V -p /w/wg-portal.pub -x /w/Packages.sig -m /w/Packages
+          docker run --rm --entrypoint sh -v "$PWD/dist:/w" -v "$PWD/keys:/keys:ro" \
+            "wg-portal-pkg:${{ steps.portal.outputs.version }}" \
+            -c 'apk --keys-dir /keys adbdump /w/packages.adb | grep -q ": OK"'
+
+      - name: Build the image of the check
+        # The image bakes the package in, so it is built after it.
+        if: steps.state.outputs.build == 'true'
+        run: make image VER="${{ steps.portal.outputs.version }}"
 
       - name: Check the package in the emulated router
         if: steps.state.outputs.build == 'true'
@@ -124,39 +127,46 @@ jobs:
         if: steps.state.outputs.build == 'true'
         run: |
           set -euo pipefail
-          ipk=$(ls dist/wg-portal_*.ipk)
+          apk=$(basename "$(ls dist/wg-portal-*.apk)")
           orig=$(stat -c %s dist/wg-portal.orig)
           packed=$(stat -c %s dist/wg-portal.packed)
+          version=$(basename "$apk" .apk)
+          version=${version#wg-portal-}
           {
             echo "The package of the portal for the router of the LAN: RouteRich AX3000 v1"
-            echo "(\`mediatek/filogic\`, \`aarch64_cortex-a53\`), kernel 6.6.144."
+            echo "(\`mediatek/filogic\`, \`aarch64_cortex-a53\`), kernel 6.12.112."
+            echo
+            echo "The version of the package is four numbers: the three of the version of the"
+            echo "portal and the fourth one is the revision of the packaging."
             echo
             echo '```sh'
-            echo "opkg install https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.ipk"
+            echo "apk add --allow-untrusted https://github.com/nhths/wg-portal-openwrt/releases/latest/download/$apk"
             echo '```'
             echo
-            echo "The name of the asset is the same in every release, so the command does not"
-            echo "change: the version is in the release and in the package itself."
+            echo "The name of the asset carries the version, so the command gives the current"
+            echo "version — running it again updates the package. The package is signed, though:"
+            echo "the key of the project has to be trusted first — see the feed below."
             echo
             echo "### The feed"
             echo
-            echo "The release carries also the index of a feed (\`Packages\`, \`Packages.gz\`,"
-            echo "\`Packages.sig\` and \`wg-portal.pub\`). With it the router installs and updates"
-            echo "the package by name:"
+            echo "The release carries also the index of the feed (\`packages.adb\`) and the public"
+            echo "key of it (\`wg-portal.pem\`). With it the router installs and updates the"
+            echo "package by name:"
             echo
             echo '```sh'
-            echo "wget -O /tmp/wg-portal.pub https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pub"
-            echo "opkg-key add /tmp/wg-portal.pub"
-            echo "echo 'src/gz wgp https://github.com/nhths/wg-portal-openwrt/releases/latest/download' >> /etc/opkg/customfeeds.conf"
-            echo "opkg update"
-            echo "opkg install wg-portal"
+            echo "mkdir -p /etc/apk/keys"
+            echo "wget -O /etc/apk/keys/wg-portal.pem https://github.com/nhths/wg-portal-openwrt/releases/latest/download/wg-portal.pem"
+            echo "echo 'https://github.com/nhths/wg-portal-openwrt/releases/latest/download/packages.adb' >> /etc/apk/repositories.d/customfeeds.list"
+            echo "apk update"
+            echo "apk add wg-portal"
             echo '```'
             echo
-            echo "The index is signed with \`usign\`, the way the feeds of OpenWrt are signed. The"
-            echo "fingerprint of the key is \`4aae624e9d888fea\`; check it with"
-            echo "\`usign -F -p /tmp/wg-portal.pub\` before trusting it."
+            echo "The index is signed with the key of the project, an EC key of the curve"
+            echo "P-256. Its id — the fingerprint of it — is"
+            echo "\`fae55c35045ee540348110e6d6487953\`; the sha256 of the public key is"
+            echo "\`c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443\`."
             echo
-            echo "The dependency of the package, the WireGuard kernel module, opkg pulls in"
+            echo "The dependency of the package, the WireGuard kernel module, apk pulls in"
             echo "itself — from the feeds of the firmware, so the router needs the internet."
             echo "The package carries no configuration: write"
             echo "\`/etc/wg-portal/config.yaml\` and start the service."
@@ -166,7 +176,7 @@ jobs:
             echo "| original | $orig |"
             echo "| packed (UPX --best --lzma) | $packed |"
             echo
-            echo "Checked in the emulated OpenWrt: opkg installs the package with the module,"
+            echo "Checked in the emulated OpenWrt: apk installs the package with the module,"
             echo "the portal answers and a WireGuard tunnel through it works."
           } > "$RUNNER_TEMP/notes.md"
 
@@ -176,17 +186,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          version="${{ steps.portal.outputs.version }}"
-          ipk=$(ls dist/wg-portal_*.ipk)
-          # The same package under a name that does not change from release to
-          # release: the url of it is the one that is put on the router, and it
-          # stays the same whatever the version is.
-          cp "$ipk" dist/wg-portal.ipk
-          # The feed: the index of the packages, the signature of the index and
-          # the public key of it. opkg takes them from the directory of the
-          # url of the feed, so the names of them are fixed.
-          gh release create "$version" "$ipk" dist/wg-portal.ipk \
-            dist/Packages dist/Packages.gz dist/Packages.sig dist/wg-portal.pub \
+          apk=$(ls dist/wg-portal-*.apk)
+          version=$(basename "$apk" .apk)
+          version=${version#wg-portal-}
+          # The feed: the index of the packages and the public key of it. apk
+          # takes them from the directory of the url of the feed, so the names
+          # of them are fixed.
+          gh release create "$version" "$apk" dist/packages.adb dist/wg-portal.pem \
             --title "wg-portal $version for OpenWrt (aarch64_cortex-a53)" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
@@ -196,11 +202,9 @@ jobs:
         with:
           name: wg-portal-${{ steps.portal.outputs.version }}
           path: |
-            dist/*.ipk
-            dist/Packages
-            dist/Packages.gz
-            dist/Packages.sig
-            dist/wg-portal.pub
+            dist/*.apk
+            dist/packages.adb
+            dist/wg-portal.pem
 
       - name: The summary
         run: |

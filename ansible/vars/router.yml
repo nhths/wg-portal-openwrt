@@ -1,0 +1,8 @@
+---
+# The ports of the LAN router. Every one of them is overridden on the command
+# line:
+#
+#   ansible-playbook ansible/router.yml -e wireguard_port=62820
+
+portal_web_port: 8888
+wireguard_port: 51820

@@ -1,0 +1,5 @@
+#!/bin/sh
+# The service is not restarted here: the old binary keeps running until the
+# play restarts it.
+/etc/init.d/wg-portal enable
+exit 0

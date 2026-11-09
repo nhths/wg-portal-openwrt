@@ -1,16 +1,16 @@
-# The toolbox of the package: UPX to pack the binary, GNU tar to assemble the
-# .ipk and Jinja2 to render the files of the package.
+# The toolbox of the package: UPX to pack the binary, the apk-tools to build
+# the package and the index of the feed, and Jinja2 to render the files of the
+# package.
 #
 #   docker build -f Dockerfile.pkg -t wg-portal-pkg:local .
 #   docker run --rm -v "$PWD/dist:/w" wg-portal-pkg:local
-#
-# Debian, because the busybox tar of Alpine does not know the options the
-# package needs (--numeric-owner, --owner, --group). UPX is the official
-# release of the version Alpine ships (4.2.4), so the packed binary is the
-# same byte for byte.
 FROM debian:bookworm-slim
 
 ARG UPX_VERSION=4.2.4
+ARG APK_VERSION=3.0.9
+ARG APK_RELEASE=r0
+ARG APK_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64
+ARG APK_SHA256=0a1a0682375f66a83b7b903f6e4638ccfe312547d50d336b5f2be9fc391281be
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -32,8 +32,20 @@ RUN curl -fsSL -o /tmp/upx.tar.xz \
  && rm -rf /tmp/upx* \
  && upx --version
 
-COPY scripts/build-ipk.sh /opt/wg-portal/build-ipk.sh
+# The apk-tools of Alpine: the static build, unpacked from the package of
+# them.
+RUN curl -fsSL -o /tmp/apk.apk \
+      "$APK_URL/apk-tools-static-${APK_VERSION}-${APK_RELEASE}.apk" \
+ && echo "${APK_SHA256}  /tmp/apk.apk" | sha256sum -c - \
+ && mkdir -p /tmp/apk \
+ && tar --warning=no-unknown-keyword -xzf /tmp/apk.apk -C /tmp/apk sbin/apk.static \
+ && install -m 755 /tmp/apk/sbin/apk.static /usr/local/bin/apk \
+ && rm -rf /tmp/apk /tmp/apk.apk \
+ && apk --version
+
+COPY scripts/build-apk.sh /opt/wg-portal/build-apk.sh
+COPY scripts/make-feed.sh /opt/wg-portal/make-feed.sh
 COPY templates/ /opt/wg-portal/templates/
 
 WORKDIR /w
-ENTRYPOINT ["/opt/wg-portal/build-ipk.sh"]
+ENTRYPOINT ["/opt/wg-portal/build-apk.sh"]

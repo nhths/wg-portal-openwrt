@@ -1,0 +1,13 @@
+#!/bin/sh
+# The service is enabled, but not started: the package carries no
+# configuration of the portal, and it cannot run before it is written.
+#
+# apk runs the scripts of a package with a small environment of its own —
+# APK_SCRIPT and APK_PACKAGE — and nothing else: IPKG_INSTROOT, the variable
+# of opkg, is not set.
+#
+# OpenWrt enables and starts the services of a package in default_postinst
+# (it finds them in /lib/apk/packages/<name>.list). The portal is not one of
+# them: it needs the configuration of it, which is written on the router.
+/etc/init.d/wg-portal enable
+exit 0

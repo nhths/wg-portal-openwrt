@@ -1,7 +1,7 @@
 ---
 # The OpenWrt setup of the emulated router of the WireGuard check.
 #
-# The guest is a stock OpenWrt 24.10.8 on the flash of the emulated router.
+# The guest is a stock OpenWrt 25.12.6 on the flash of the emulated router.
 # The setup is done with the same collection the real LAN router uses: its
 # modules are ucode scripts, so no Python is needed on the device.
 #
@@ -13,10 +13,6 @@
 #   ansible-playbook ansible/site.yml --tags net
 #   ansible-playbook ansible/site.yml --tags setup
 #   ansible-playbook ansible/site.yml --tags verify
-#
-# The values of the emulated router are passed in by the harness:
-#
-#   ansible-playbook ansible/site.yml --tags setup -e @/tmp/wgp-vm/vars.json
 
 - name: Register the emulated router
   hosts: localhost
@@ -42,8 +38,7 @@
 
     - name: Write the network of the guest into the rootfs
       # The tap between the host and the guest has no DHCP server, so the
-      # address of the guest has to be in the flash before the router boots:
-      # Ansible needs SSH to get into the guest at all.
+      # address of the guest has to be in the flash before the router boots.
       ansible.builtin.template:
         src: "{{ template_dir }}/openwrt/network.j2"
         dest: "{{ wgp.rootfs }}/etc/config/network"

@@ -4,12 +4,7 @@
 #
 # Why a guest and not a container: under qemu-user the call
 # socket(AF_NETLINK, ..., NETLINK_GENERIC) returns EPROTONOSUPPORT, so
-# wgctrl cannot be created and wg-portal panics on startup. A full system
-# emulation has a real arm64 kernel and behaves like the device.
-#
-# The guest is an initramfs of Alpine with two scripts in it, both files of
-# their own (scripts/bench-init.sh and scripts/bench-one.sh) copied into the
-# initramfs.
+# wgctrl cannot be created and wg-portal panics on startup.
 set -euo pipefail
 
 QEMU=${QEMU:-qemu-system-aarch64}

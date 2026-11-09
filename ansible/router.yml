@@ -1,37 +1,18 @@
 ---
-# The feed of the portal on the LAN router.
+# The feed of the portal on the LAN router, its firewall and its service.
 #
-# The play is self-contained: it needs nothing but Ansible and the access to
-# the router. The public key of the feed it fetches itself, the address of
-# the router is a variable of the play, and the inventory is not needed — the
-# router is registered here. If the inventory has a host named "router",
-# that one is used as it is.
-#
-#   ansible-playbook ansible/router.yml
+#   ansible-galaxy collection install -r ansible/requirements.yml
 #   ansible-playbook ansible/router.yml -e router_address=192.168.0.1
 #
-# Only the modules of Ansible itself are used. The modules of the
-# community.openwrt collection would need a collection that is not in Ansible,
-# and this play has to work on a machine where nothing was installed for it.
-#
-# The router is an OpenWrt on dropbear: it has no Python, so the commands
-# run through the raw module, which needs no interpreter on the device.
-#
-# The configuration of the portal, the zone of the firewall and the service
-# are not here: they need the password of the portal, and the README has
-# them.
+# The interface of the tunnel and the peers are not here: the portal creates
+# them itself, from its web interface.
 
 - name: Register the router
   hosts: localhost
   gather_facts: false
   vars:
-    # The address of the LAN router. The inventory of the serverside repo
-    # owns the value, but the play has to work without any inventory — this
-    # is the default, and it is overridden with -e router_address=...
     router_address: 192.168.0.1
     router_user: root
-    # The private key of the router. Empty means the default one of the
-    # machine the play runs on.
     router_ssh_key: ""
   tasks:
     - name: Add the router to the inventory
@@ -40,33 +21,26 @@
         ansible_host: "{{ router_address }}"
         ansible_user: "{{ router_user }}"
         ansible_ssh_private_key_file: "{{ router_ssh_key if router_ssh_key else omit }}"
-        # dropbear drops a session that gets nothing for 300 seconds, and it
-        # counts the packets it reads: the keepalive of the client is what
-        # keeps the session alive while opkg downloads the package.
+        # dropbear drops a session that gets nothing for 300 seconds.
         ansible_ssh_common_args: >-
           -o StrictHostKeyChecking=accept-new
           -o ServerAliveInterval=30
           -o ServerAliveCountMax=6
-      # The variable of the inventory is not there when no inventory was
-      # parsed at all — the play has to work without one.
       when: "'router' not in (ansible_inventory_hostnames | default({}))"
 
 - name: Install the feed of the portal on the router
   hosts: router
   gather_facts: false
   vars:
-    # The feed of the portal: the directory of the download of the last
-    # release. opkg takes the index and the packages of the feed from it.
     feed_url: https://github.com/nhths/wg-portal-openwrt/releases/latest/download
-    # The public key of the feed, in the release next to the index.
-    feed_key_url: "{{ feed_url }}/wg-portal.pub"
-    # The fingerprint of the key of the feed. It is the one of the key in
-    # keys/wg-portal.pub, and the README has it as well.
-    feed_fingerprint: 4aae624e9d888fea
+    feed_key_url: "{{ feed_url }}/wg-portal.pem"
+    # The sha256 of the public key of the feed. The key itself is checked by
+    # apk when it checks the signature of the index of the feed — this check
+    # is about the key being the one of the project and not about the
+    # signature.
+    feed_key_sha256: c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443
   tasks:
     - name: Fetch the public key of the feed
-      # The key is fetched by the machine the play runs on, not by the router:
-      # the router has no Python, and the module of the url needs one.
       ansible.builtin.uri:
         url: "{{ feed_key_url }}"
         return_content: true
@@ -74,102 +48,453 @@
       delegate_to: localhost
       register: feed_key
 
-    - name: Write the key to the router
-      # The copy module of Ansible needs Python on the device, and the router
-      # has none — the file is written through the shell instead.
-      ansible.builtin.raw: |
-        printf '%s\n' {{ feed_key.content | trim | quote }} > /tmp/wg-portal.pub
-      changed_when: true
-
-    - name: Read the fingerprint of the key
-      ansible.builtin.raw: "usign -F -p /tmp/wg-portal.pub"
-      register: router_fingerprint
-      changed_when: false
-
-    - name: Report the fingerprint of the key
-      ansible.builtin.debug:
-        msg: "{{ router_fingerprint.stdout }}"
-
     - name: Fail when the key is not the one of the project
-      # The key is trusted only when it is the one of the project: the
-      # fingerprint of it is in the README and in AGENTS.md.
       ansible.builtin.assert:
         that:
-          - feed_fingerprint in router_fingerprint.stdout
+          - feed_key.content | hash('sha256') == feed_key_sha256
         fail_msg: >-
-          the fingerprint of the key is not {{ feed_fingerprint }} —
-          the key is not the one of the project
+          the sha256 of the key of the feed is
+          {{ feed_key.content | hash('sha256') }} — it has to be
+          {{ feed_key_sha256 }}, the key is not the one of the project
         quiet: true
 
-    - name: Trust the public key of the feed
-      # opkg-key puts the key into /etc/opkg/keys under its fingerprint, and
-      # opkg checks the signature of the index of the feed against the keys
-      # it trusts.
-      ansible.builtin.raw: "opkg-key add /tmp/wg-portal.pub"
-      changed_when: false
-
-    - name: Point opkg at the feed of the portal
-      # The firmware of the router ships /etc/opkg/customfeeds.conf full of
-      # null bytes, and opkg does not read such a file: the feed of the
-      # portal stays invisible to it, and opkg answers "Cannot install
-      # package". The nulls are dropped, the lines that are left are kept,
-      # and the feed is added to them.
-      #
-      # The source is declared as "src/gz", the way the feeds of the firmware
-      # are declared: opkg takes the index of it compressed then, and stores
-      # it compressed. LuCI reads the indexes of the feeds with "gzip -cd",
-      # and it skips the ones that are not compressed — with a plain index
-      # the portal shows up in the list of the installed packages without a
-      # size and without a description.
-      ansible.builtin.raw: >-
-        [ -f /etc/opkg/customfeeds.conf ]
-        && tr -d "\000" < /etc/opkg/customfeeds.conf > /tmp/customfeeds.conf
-        || : > /tmp/customfeeds.conf;
-        grep -v "^src.* wgp {{ feed_url }}$" /tmp/customfeeds.conf
-        > /tmp/customfeeds.new || :;
-        echo "src/gz wgp {{ feed_url }}" >> /tmp/customfeeds.new;
-        cat /tmp/customfeeds.new > /etc/opkg/customfeeds.conf;
-        rm -f /tmp/customfeeds.conf /tmp/customfeeds.new
-      changed_when: false
-
-    - name: Update the lists of opkg
-      ansible.builtin.raw: "opkg update"
-      register: router_update
-      changed_when: false
-      until: router_update.rc == 0
-      retries: 15
-      delay: 2
-
-    - name: Report the update of the lists
-      ansible.builtin.debug:
-        msg: "{{ router_update.stdout }}"
-
-    - name: Check whether the portal is installed
-      ansible.builtin.raw: "opkg status wg-portal"
-      register: router_status
-      changed_when: false
-      failed_when: false
+    - name: Trust the feed of the portal and point apk at it
+      # The feed is declared in the file OpenWrt keeps across a system
+      # upgrade.
+      community.openwrt.apk_feed:
+        url: "{{ feed_url }}/packages.adb"
+        key: "{{ feed_key.content }}"
+        key_name: wg-portal.pem
 
     - name: Install the portal from the feed
-      # A package that is not on the router yet is installed, a package that
-      # is there is upgraded: opkg does not reinstall a package of the same
-      # version, and the feed is what brings the next one by itself.
-      ansible.builtin.raw: >-
-        {{ 'opkg upgrade wg-portal' if 'Status:' in router_status.stdout
-        else 'opkg install wg-portal' }}
+      # `state: latest` installs the portal when it is missing and upgrades it
+      # when the feed has a newer version — `apk add` alone leaves a package
+      # that is installed already alone.
+      community.openwrt.apk:
+        name: wg-portal
+        state: latest
+        update_cache: true
       register: router_install
-      changed_when: >-
-        'Installing' in router_install.stdout or 'Upgrading' in router_install.stdout
-
-    - name: Report the installation
-      ansible.builtin.debug:
-        msg: "{{ router_install.stdout }}"
 
     - name: Report the state of the portal and of its dependency
-      ansible.builtin.raw: "opkg status wg-portal kmod-wireguard"
+      community.openwrt.command:
+        cmd: "apk info wg-portal kmod-wireguard"
       register: router_state
       changed_when: false
 
     - name: Report the state of the portal and of its dependency
       ansible.builtin.debug:
         msg: "{{ router_state.stdout }}"
+
+- name: Configure the portal on the router
+  hosts: router
+  gather_facts: false
+  vars_files:
+    - vars/router.yml
+  vars:
+    portal_admin_password: ""
+    portal_web_address: 0.0.0.0
+    redirect_fields: [name, dest, dest_ip, dest_port, src_dport]
+    tunnel_zone: wg
+    tunnel_interface: wg0
+    tunnel_config_path: /etc/wireguard
+  tasks:
+    - name: Create the directory of the portal
+      community.openwrt.file:
+        path: /etc/wg-portal
+        state: directory
+        mode: "0700"
+
+    - name: Check whether the portal is configured
+      community.openwrt.stat:
+        path: /etc/wg-portal/config.yaml
+      register: portal_configured
+
+    - name: Make the password of the administrator
+      community.openwrt.command:
+        cmd: >-
+          [ -n {{ portal_admin_password | quote }} ] && echo {{ portal_admin_password | quote }}
+          || (head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
+        uses_shell: true
+      register: portal_password
+      changed_when: false
+      when: not portal_configured.stat.exists
+
+    - name: Write the configuration of the portal
+      community.openwrt.copy:
+        content: |
+          core:
+            admin_password: {{ portal_password.stdout | trim }}
+          web:
+            listening_address: {{ portal_web_address }}:{{ portal_web_port }}
+          database:
+            dsn: /etc/wg-portal/wg.db
+        dest: /etc/wg-portal/config.yaml
+        mode: "0600"
+      when: not portal_configured.stat.exists
+
+    - name: Report the password of the administrator
+      ansible.builtin.debug:
+        msg: >-
+          the password of the administrator of the portal:
+          {{ portal_password.stdout | trim }}
+      when: not portal_configured.stat.exists
+
+    - name: Read the configuration of the portal
+      community.openwrt.slurp:
+        src: /etc/wg-portal/config.yaml
+      register: portal_config
+
+    - name: Take the port of the web interface of the portal
+      ansible.builtin.set_fact:
+        portal_port: >-
+          {{ (portal_config.content | b64decode | split('\n')
+              | map('trim') | select('search', 'listening_address:') | list | first
+              | default('', true) | split(':') | last | trim
+              | default(portal_web_port | string, true)) }}
+
+    - name: Look for the configuration of the tunnel
+      community.openwrt.stat:
+        path: "{{ tunnel_config_path }}/{{ tunnel_interface }}.conf"
+      register: tunnel_config_stat
+
+    - name: Read the configuration of the tunnel
+      community.openwrt.slurp:
+        src: "{{ tunnel_config_path }}/{{ tunnel_interface }}.conf"
+      register: tunnel_config
+      when: tunnel_config_stat.stat.exists
+
+    - name: Take the port and the network of the tunnel
+      ansible.builtin.set_fact:
+        tunnel_port: >-
+          {{ (tunnel_config.content | default('') | b64decode | split('\n')
+              | map('trim') | select('search', '^ListenPort') | list | first
+              | default('', true) | split('=') | last | trim) }}
+        tunnel_network: >-
+          {{ (tunnel_config.content | default('') | b64decode | split('\n')
+              | map('trim') | select('search', '^Address') | list | first
+              | default('', true) | split('=') | last | trim) }}
+
+    - name: Check that the port of the tunnel is the port of the play
+      ansible.builtin.assert:
+        that:
+          - tunnel_port == "" or tunnel_port == wireguard_port | string
+        fail_msg: >-
+          the tunnel listens on the port {{ tunnel_port }}, and the rule of
+          the firewall is made for the port {{ wireguard_port }} — run the
+          play with -e wireguard_port={{ tunnel_port }}
+        quiet: true
+
+    - name: Report the port and the network of the tunnel
+      ansible.builtin.debug:
+        msg: >-
+          the tunnel listens on the port {{ tunnel_port | default('unknown', true) }},
+          the network of it is {{ tunnel_network | default('unknown', true) }}
+
+    - name: Check that the network of the tunnel is known
+      ansible.builtin.assert:
+        that:
+          - tunnel_network != ""
+        fail_msg: >-
+          the network of the tunnel is not in the configuration of its
+          interface — the firewall cannot be told where the peers are
+        quiet: true
+
+    - name: Put the tunnel into the firewall
+      # The zone names the device, not a network: the interface of the tunnel
+      # is created by the portal itself and is not in /etc/config/network.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: zone
+            name: "{{ tunnel_zone }}"
+            find:
+              name: "{{ tunnel_zone }}"
+            value:
+              input: ACCEPT
+              output: ACCEPT
+              forward: ACCEPT
+          - command: add_list
+            key: "firewall.{{ tunnel_zone }}.device"
+            value: "{{ tunnel_interface }}"
+            unique: true
+
+    - name: Tell the firewall the network of the tunnel
+      # Without the network fw4 does not know the addresses of the peers.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: set
+            key: "firewall.{{ tunnel_zone }}.subnet"
+            value: "{{ tunnel_network }}"
+
+    - name: Let the tunnel and the lan talk to each other
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: forwarding
+            name: "{{ item.section }}"
+            find:
+              src: "{{ item.src }}"
+              dest: "{{ item.dest }}"
+            value:
+              src: "{{ item.src }}"
+              dest: "{{ item.dest }}"
+      loop:
+        - section: wg_to_lan
+          src: wg
+          dest: lan
+        - section: wg_to_wan
+          src: wg
+          dest: wan
+        - section: lan_to_wg
+          src: lan
+          dest: wg
+
+    - name: Let the peers in from the internet
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: rule
+            name: wg_incoming
+            find:
+              name: Allow-WireGuard
+            value:
+              name: Allow-WireGuard
+              src: wan
+              proto: udp
+              dest_port: "{{ wireguard_port }}"
+              target: ACCEPT
+
+    - name: Find the redirects of the wan zone
+      community.openwrt.uci:
+        command: find_all
+        config: firewall
+        type: redirect
+        find:
+          src: wan
+      register: wan_redirects
+      changed_when: false
+      failed_when: false
+
+    - name: Read the redirects of the wan zone
+      # "uci get" of a section returns the type of it, not its options.
+      community.openwrt.uci:
+        command: get
+        config: firewall
+        section: "{{ item.0 }}"
+        option: "{{ item.1 }}"
+      register: redirect_options
+      loop: >-
+        {{ wan_redirects.result_list | default([])
+        | product(redirect_fields) | list }}
+      changed_when: false
+      failed_when: false
+
+    - name: Take the redirects of the wan zone
+      ansible.builtin.set_fact:
+        public_redirects: "{{ public_redirects | default([]) + [dict(redirect_fields | zip(item))] }}"
+      loop: >-
+        {{ redirect_options.results | default([]) | map(attribute='result') | list
+        | batch(redirect_fields | length) | list }}
+
+    - name: Let the tunnel reach the services of the public address
+      # fw4 builds the rules of the hairpin on its own: the traffic of the lan
+      # to the public address of the router is redirected to the gate. The zone
+      # of the tunnel wants the same, and the reflection of the redirect gives
+      # it to the zone of the tunnel. A redirect of the zone of the tunnel on
+      # its own would match by the port alone.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: redirect
+            find:
+              name: "{{ item.name }}"
+            value:
+              reflection_zone: "{{ item.dest }} {{ tunnel_zone }}"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Masquerade the traffic of the tunnel to the gateway
+      # The rules of the reflection masquerade the traffic back to the lan
+      # address of the router — for the lan. The rules of the zone of the
+      # tunnel land in the chain of that zone, and the traffic of the peers
+      # leaves through the lan, so they never apply to it. The rule of its
+      # own does the same for the peers: the gateway answers to the router.
+      #
+      # The section is of the type nat and not a redirect with the target
+      # SNAT: LuCI nags about the second form until it is migrated. fw4 puts
+      # the rule of a nat into the chain of the zone of its source — the zone
+      # the traffic leaves through, and that is the lan.
+      #
+      # The section is found by its name: one that LuCI has migrated already
+      # carries this name.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: nat
+            find:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+            value:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+              src: "{{ item.dest }}"
+              src_ip: "{{ tunnel_network }}"
+              dest_ip: "{{ item.dest_ip }}"
+              dest_port: "{{ item.dest_port }}"
+              snat_ip: "{{ router_address }}"
+              target: snat
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Take the rules of the old form of the tunnel away
+      # The masquerade of the way back was a redirect with the target SNAT
+      # before; LuCI wants the sections of the type nat. The section is
+      # taken away by its name, so that the rule of the nat above is the
+      # only one.
+      community.openwrt.uci:
+        autocommit: false
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Take the redirects of the tunnel away
+      # The older version of the play made a redirect of its own for the zone
+      # of the tunnel, and that one matched by the port alone.
+      community.openwrt.uci:
+        autocommit: false
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Masquerade the traffic that leaves to the internet
+      # The zone of the wan masquerades the traffic that leaves through it. A
+      # rule of its own for the tunnel would masquerade the traffic the wrong
+      # way round: fw4 puts it into the chain of the zone of the source.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: zone
+            find:
+              name: wan
+            value:
+              masq: "1"
+
+    - name: Take the masquerade of the tunnel away
+      community.openwrt.uci:
+        command: delete
+        key: firewall.wg_masquerade
+
+    - name: Write the firewall
+      community.openwrt.uci:
+        command: commit
+        config: firewall
+
+    - name: Reload the firewall
+      community.openwrt.service:
+        name: firewall
+        state: reloaded
+
+    - name: Look for the proxy of the router
+      community.openwrt.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/init.d/podkop
+        - /etc/config/podkop
+      register: podkop_files
+
+    - name: Check that the proxy of the router is there
+      ansible.builtin.set_fact:
+        podkop_present: "{{ podkop_files.results | map(attribute='stat.exists') | list | all }}"
+
+    - name: Read the interfaces of the proxy of the router
+      # The dns of the router answers with the fake addresses of the proxy, and
+      # the proxy intercepts the traffic to them. The tunnel has to be in the
+      # list of the interfaces of the proxy as well, or the traffic of the
+      # peers to those addresses is not intercepted.
+      community.openwrt.uci:
+        command: get
+        config: podkop
+        section: settings
+        option: source_network_interfaces
+      register: podkop_interfaces
+      changed_when: false
+      failed_when: false
+      when: podkop_present | bool
+
+    - name: Let the tunnel through the proxy of the router
+      community.openwrt.uci:
+        autocommit: true
+        command: set
+        config: podkop
+        section: settings
+        option: source_network_interfaces
+        value: >-
+          {{ (podkop_interfaces.result | default('', true)).split(' ')
+          | select('ne', '') | list | union([tunnel_interface]) | join(' ') }}
+      notify: Restart the proxy of the router
+      when: podkop_present | bool
+
+    - name: Enable and start the portal
+      # The postinst of the package only enables the service: an upgrade of
+      # the package leaves the old binary running until it is restarted.
+      community.openwrt.service:
+        name: wg-portal
+        state: "{{ 'restarted' if router_install.changed | default(false) else 'started' }}"
+        enabled: true
+
+    - name: Wait for the portal to answer
+      community.openwrt.command:
+        cmd: >-
+          wget -q -O /dev/null http://127.0.0.1:{{ portal_port }}/api/v0/auth/providers
+      register: portal_http
+      changed_when: false
+      until: portal_http.rc == 0
+      retries: 30
+      delay: 2
+
+    - name: Report the state of the portal
+      community.openwrt.command:
+        cmd: "logread | tail -20; netstat -ltn"
+        uses_shell: true
+      register: portal_state
+      changed_when: false
+
+    - name: Gather the installed packages once more
+      community.openwrt.command:
+        cmd: "apk info wg-portal"
+      register: portal_version
+      changed_when: false
+
+    - name: Report the state of the portal
+      ansible.builtin.debug:
+        msg: "{{ portal_state.stdout }}{{ portal_version.stdout }}"
+
+  handlers:
+    - name: Restart the proxy of the router
+      community.openwrt.service:
+        name: podkop
+        state: restarted

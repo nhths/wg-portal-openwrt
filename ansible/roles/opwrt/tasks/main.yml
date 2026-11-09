@@ -14,101 +14,72 @@
     msg: "{{ opwrt_kernel.stdout | trim }}"
 
 - name: Accept the architectures of the packages
-  community.openwrt.lineinfile:
-    path: /etc/opkg.conf
-    line: "arch {{ item }}"
-    state: present
-  loop: "{{ wgp.architectures }}"
-
-- name: Copy the public key of the feed of the portal to the guest
-  # opkg checks the signature of the index of a feed against the keys it
-  # trusts, so the key of the feed goes into /etc/opkg/keys of the guest.
-  community.openwrt.copy:
-    src: "{{ wgp.feed_pubkey }}"
-    dest: "/tmp/wg-portal.pub"
-    mode: "0644"
-
-- name: Trust the public key of the feed of the portal
-  community.openwrt.command:
-    cmd: "opkg-key add /tmp/wg-portal.pub"
-  register: opwrt_key
-  changed_when: false
-
-- name: Report the key of the feed
-  ansible.builtin.debug:
-    msg: "{{ opwrt_key.stdout }}"
-
-- name: Point opkg at the feeds of the check
-  # The portal comes from the feed of this project, the kernel modules from
-  # the feed of OpenWrt: opkg resolves the dependency of the portal on
-  # kmod-wireguard against the index of that feed.
+  # apk takes the list of the architectures from /etc/apk/arch, one per
+  # line, and refuses a package whose architecture is not in it.
   community.openwrt.copy:
     content: |
-      src/gz wgp {{ wgp.wgp_feed_url }}
-      src openwrt {{ wgp.feed_url }}
-    dest: /etc/opkg/customfeeds.conf
+      aarch64_generic
+      aarch64_cortex-a53
+    dest: /etc/apk/arch
     mode: "0644"
 
-- name: Drop the feeds of the firmware
-  # The guest has no internet: the only feed it can reach is the one of the
-  # check.
+- name: Point apk at the feed of the kernel modules
+  # The feeds of the firmware are replaced: the guest has no internet, the
+  # feed of the check is the only one it can reach. The url of a feed is the
+  # url of its index: a url that ends with ".adb" is taken as it is.
   community.openwrt.copy:
-    content: "# no internet in the guest: the only feed is the one of the check\n"
-    dest: /etc/opkg/distfeeds.conf
+    content: |
+      {{ wgp.feed_url }}
+    dest: /etc/apk/repositories.d/distfeeds.list
     mode: "0644"
 
-- name: Update the lists of opkg
-  community.openwrt.command:
-    cmd: "opkg update"
-  register: opwrt_update
-  changed_when: false
-  until: opwrt_update.rc == 0
-  retries: 15
-  delay: 2
-
-- name: Report the update of the lists
-  ansible.builtin.debug:
-    msg: "{{ opwrt_update.stdout }}"
+- name: Trust the feed of the portal and point apk at it
+  # The index of the feed is signed with the key of the project, and apk
+  # checks the signature against the keys it trusts in /etc/apk/keys — so
+  # the key of the feed goes there.
+  community.openwrt.apk_feed:
+    url: "{{ wgp.wgp_feed_url }}"
+    key: "{{ lookup('file', wgp.feed_pubkey) }}"
+    key_name: wg-portal.pem
+    file: /etc/apk/repositories.d/customfeeds.list
 
 - name: Install the portal
-  # The portal is in the feed of this project: opkg finds it by its name and
-  # checks the signature of the index of the feed against the key of it. Its
-  # dependency, the WireGuard kernel module, opkg resolves on its own: it
-  # takes it from the feed of OpenWrt, with the modules it needs.
-  community.openwrt.command:
-    cmd: "opkg install wg-portal"
+  # Its dependency, the WireGuard kernel module, apk resolves on its own: it
+  # takes it from the feed of OpenWrt, with the modules it needs. The cache
+  # is updated first, so the feed of the check is known.
+  community.openwrt.apk:
+    name: wg-portal
+    state: present
+    update_cache: true
   register: opwrt_install
-  changed_when: false
 
 - name: Report the installation
   ansible.builtin.debug:
-    msg: "{{ opwrt_install.stdout }}"
+    msg: "{{ opwrt_install.stdout | default('') }}"
 
-- name: Check that the dependency was installed with the portal
-  ansible.builtin.assert:
-    that:
-      - "'Installing kmod-wireguard' in opwrt_install.stdout"
-    fail_msg: "opkg did not install kmod-wireguard as a dependency of the portal"
-    quiet: true
-
-- name: Check that the kernel module is installed
-  community.openwrt.command:
-    cmd: "opkg status kmod-wireguard"
-  register: opwrt_kmod
-  changed_when: false
-  failed_when: "'Status: install ok installed' not in opwrt_kmod.stdout"
+- name: Look for the files of the portal
+  # apk writes the list of the files of a package when it installs it. The
+  # module of the installation fails when the package is not there, so this is
+  # a check of the files themselves.
+  community.openwrt.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/wg-portal
+    - /etc/init.d/wg-portal
+    - /lib/apk/packages/wg-portal.list
+  register: opwrt_files
 
 - name: Check that the portal is installed
-  community.openwrt.command:
-    cmd: "opkg status wg-portal"
-  register: opwrt_status
-  changed_when: false
-  failed_when: "'Status: install user installed' not in opwrt_status.stdout"
+  ansible.builtin.assert:
+    that:
+      - opwrt_files.results | map(attribute='stat.exists') | select('false') | list | length == 0
+    fail_msg: "the files of the portal are missing"
+    quiet: true
 
 - name: Load the WireGuard kernel modules
   # OpenWrt has no modprobe, the modules are loaded by kmodloader. The
   # postinstall scripts of the packages load them already, so a failure here
-  # is not a problem — the check of the tunnel tells if the module is there.
+  # is not a problem.
   community.openwrt.command:
     cmd: "kmodloader {{ item }}"
   loop: "{{ wgp.modules }}"

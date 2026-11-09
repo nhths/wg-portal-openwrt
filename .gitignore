@@ -1,5 +1,9 @@
-# Build artifacts: downloaded binaries, the packed binary, the .ipk, logs.
+# Build artifacts: downloaded binaries, the packed binary, the .apk, the index
+# of the feed, logs.
 dist/
 
 # The cache of Ansible: the collection and the roles it downloads.
 .ansible/
+
+# The cache of Python.
+__pycache__/
