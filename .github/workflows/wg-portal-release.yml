@@ -1,9 +1,9 @@
 # The release of the .apk package for wg-portal.
 #
-# Every two weeks the workflow looks for a new release of the portal
-# (h44z/wg-portal). If there is one, it builds the package for the router,
-# checks it in the emulated OpenWrt and publishes the .apk as a release of
-# this repository.
+# The workflow looks for a new release of the portal (h44z/wg-portal) — every
+# two weeks and on every commit to master. If there is one, it builds the
+# package for the router, checks it in the emulated OpenWrt and publishes the
+# .apk as a release of this repository.
 #
 # The version of the release is four numbers: the three of the version of the
 # portal and the fourth one is the revision of the packaging.
@@ -18,10 +18,10 @@ on:
     # workflows with a delay, and the top of the hour is crowded.
     - cron: "17 6 1,15 * *"
   push:
-    # A change of the workflow itself runs it once: the run does nothing if the
-    # version of the portal is already released here.
+    # Every commit to master runs it: the run does nothing if the version of
+    # the portal is already released here. A branch is not enough — the release
+    # has to be published from master.
     branches: [master]
-    paths: ['.github/workflows/wg-portal-release.yml']
   workflow_dispatch:
     inputs:
       version:
