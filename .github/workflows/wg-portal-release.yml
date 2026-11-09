@@ -116,12 +116,25 @@ jobs:
         run: make image VER="${{ steps.portal.outputs.version }}"
 
       - name: Check the package in the emulated router
+        id: check
         if: steps.state.outputs.build == 'true'
         run: |
           set -euo pipefail
           version="${{ steps.portal.outputs.version }}"
-          docker run --rm --device /dev/net/tun --cap-add NET_ADMIN --cap-add NET_RAW \
-            "wg-portal-check:$version"
+          # The WireGuard part of the check needs a tun device, and not every
+          # runner has it: the install check is made instead, and the tunnel is
+          # not.
+          mode=wireguard
+          devices=()
+          if [ -e /dev/net/tun ]; then
+            devices=(--device /dev/net/tun)
+          else
+            mode=install
+          fi
+          echo "the check of the package: $mode"
+          docker run --rm "${devices[@]}" --cap-add NET_ADMIN --cap-add NET_RAW \
+            "wg-portal-check:$version" "$mode"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
 
       - name: Write the notes of the release
         if: steps.state.outputs.build == 'true'
@@ -176,8 +189,14 @@ jobs:
             echo "| original | $orig |"
             echo "| packed (UPX --best --lzma) | $packed |"
             echo
-            echo "Checked in the emulated OpenWrt: apk installs the package with the module,"
-            echo "the portal answers and a WireGuard tunnel through it works."
+            if [ "${{ steps.check.outputs.mode }}" = wireguard ]; then
+              echo "Checked in the emulated OpenWrt: apk installs the package with the module,"
+              echo "the portal answers and a WireGuard tunnel through it works."
+            else
+              echo "Checked in the emulated OpenWrt: apk installs the package with the module"
+              echo "and the portal answers. The runner had no tun device, so the tunnel was not"
+              echo "made there."
+            fi
           } > "$RUNNER_TEMP/notes.md"
 
       - name: Publish the release
