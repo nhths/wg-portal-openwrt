@@ -74,6 +74,10 @@ jobs:
           latest=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" | jq -r .tag_name || true)
           echo "the latest release here: ${latest:-none}"
+          # The tag of a release is the version of the package, with or
+          # without the "v": the three first numbers of it are the ones of the
+          # portal.
+          latest=${latest#v}
           if [ "${latest%.*}" = "${version#v}" ]; then
             echo "the version $version is already released here — nothing to do"
             echo "build=false" >> "$GITHUB_OUTPUT"
