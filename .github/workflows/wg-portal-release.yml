@@ -115,9 +115,15 @@ jobs:
             -c 'apk --keys-dir /keys adbdump /w/packages.adb | grep -q ": OK"'
 
       - name: Build the image of the check
-        # The image bakes the package in, so it is built after it.
+        # The image bakes the package in, so it is built after it — and it is
+        # built directly, without the make target: that target builds the
+        # package again first, and the key of the feed is not given to it
+        # here. The image carries exactly the package that is published.
         if: steps.state.outputs.build == 'true'
-        run: make image VER="${{ steps.portal.outputs.version }}"
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -t "wg-portal-check:${{ steps.portal.outputs.version }}" -f Dockerfile .
 
       - name: Check the package in the emulated router
         id: check
