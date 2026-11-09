@@ -69,7 +69,8 @@ is, and why the play has the steps it has.
 - `apk add` does not upgrade a package that is installed already, and the module
   `community.openwrt.apk` with `state: present` does not upgrade either — it asks apk about the
   package first and does nothing when it is there. `state: latest` (community.openwrt 1.11.0 and
-  later) installs the package and upgrades it when the feed has a newer version.
+  later) installs the package and upgrades it when the feed has a newer version. The collection
+  needs ansible-core 2.19 and later — the image of the check carries it.
 - The scripts of a package are run by apk with an environment of its own and nothing else:
   `APK_PACKAGE`, `APK_SCRIPT`, `PATH` and `PWD`. `IPKG_INSTROOT` — the variable of opkg, the one the
   scripts of OpenWrt use — is **not** set by apk. OpenWrt has its own hooks for its packages:
