@@ -316,7 +316,9 @@
 
     - name: Check that the proxy of the router is there
       ansible.builtin.set_fact:
-        podkop_present: "{{ podkop_files.results | map(attribute='stat.exists') | list | all }}"
+        podkop_present: >-
+          {{ podkop_files.results | map(attribute='stat.exists') | list
+          | select('equalto', false) | list | length == 0 }}
 
     - name: Read the interfaces of the proxy of the router
       # The dns of the router answers with the fake addresses of the proxy, and
@@ -334,6 +336,9 @@
       when: podkop_present | bool
 
     - name: Let the tunnel through the proxy of the router
+      # The list keeps its order and the tunnel is added once: the union of
+      # the lists reorders them, and the play would restart the proxy on
+      # every run.
       community.openwrt.uci:
         autocommit: true
         command: set
@@ -341,8 +346,9 @@
         section: settings
         option: source_network_interfaces
         value: >-
-          {{ (podkop_interfaces.result | default('', true)).split(' ')
-          | select('ne', '') | list | union([tunnel_interface]) | join(' ') }}
+          {{ ((podkop_interfaces.result | default('', true)).split(' ')
+          | reject('equalto', '') | list + [tunnel_interface])
+          | unique | join(' ') }}
       notify: Restart the proxy of the router
       when: podkop_present | bool
 
