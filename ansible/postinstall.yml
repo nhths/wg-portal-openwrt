@@ -1,0 +1,353 @@
+---
+# The firewall of the tunnel and its place in the proxy of the router.
+#
+#   ansible-playbook ansible/postinstall.yml -e router_address=192.168.0.1
+#
+# The play is the second half of the setup of the portal: `ansible/router.yml`
+# installs the package and writes the configuration of it, and this play makes
+# the tunnel work — the zone of the firewall, the rules of the hairpin, the
+# masquerade of the peers and the interface of the tunnel in the proxy.
+#
+# The address of the tunnel is the address of the router in it, and the peers
+# are in the network around it: both are variables of the play — in
+# `vars/router.yml` and on the command line. The zone of the firewall gets the
+# address of the router first: fw4 takes the first address of the zone for the
+# masquerade of the reflection of the hairpin, and the address of the network is
+# not the address of a host.
+
+- name: Register the router
+  hosts: localhost
+  gather_facts: false
+  vars:
+    router_address: 192.168.0.1
+    router_user: root
+    router_ssh_key: ""
+  tasks:
+    - name: Add the router to the inventory
+      ansible.builtin.add_host:
+        name: router
+        ansible_host: "{{ router_address }}"
+        ansible_user: "{{ router_user }}"
+        ansible_ssh_private_key_file: "{{ router_ssh_key if router_ssh_key else omit }}"
+        # dropbear drops a session that gets nothing for 300 seconds.
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=accept-new
+          -o ServerAliveInterval=30
+          -o ServerAliveCountMax=6
+      when: "'router' not in (groups['all'] | default([]))"
+
+- name: Set up the firewall of the tunnel on the router
+  hosts: router
+  gather_facts: false
+  vars_files:
+    - vars/router.yml
+  vars:
+    # The address of the router in the lan: the gateway answers to it, and the
+    # traffic of the peers is masqueraded to it.
+    router_address: 192.168.0.1
+    redirect_fields: [name, dest, dest_ip, dest_port]
+    tunnel_zone: wg
+    tunnel_interface: wg0
+  tasks:
+    - name: Look for the interface of the tunnel
+      community.openwrt.command:
+        cmd: "ip link show {{ tunnel_interface }}"
+      register: tunnel_interface_state
+      changed_when: false
+      failed_when: false
+
+    - name: Fail when the portal has no interface yet
+      ansible.builtin.assert:
+        that:
+          - tunnel_interface_state.rc == 0
+        fail_msg: >-
+          the portal has no interface of the tunnel yet — create it in the web
+          interface of the portal first
+        quiet: true
+
+    - name: Report the address of the tunnel
+      ansible.builtin.debug:
+        msg: >-
+          the address of the router in the tunnel is {{ tunnel_address }},
+          the network of the peers is {{ tunnel_network }}
+
+    - name: Put the tunnel into the firewall
+      # The zone names the device, not a network: the interface of the tunnel
+      # is created by the portal itself and is not in /etc/config/network.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: zone
+            name: "{{ tunnel_zone }}"
+            find:
+              name: "{{ tunnel_zone }}"
+            value:
+              input: ACCEPT
+              output: ACCEPT
+              forward: ACCEPT
+          - command: add_list
+            key: "firewall.{{ tunnel_zone }}.device"
+            value: "{{ tunnel_interface }}"
+            unique: true
+
+    - name: Tell the firewall the network of the tunnel
+      # Without the network fw4 does not know the addresses of the peers: the
+      # traffic of them does not match the zone and goes to its policy.
+      #
+      # The address of the router in the tunnel goes first in the list, as the
+      # address of a host: fw4 masquerades the traffic of the reflection of
+      # the hairpin to the first address of the zone, and the address of the
+      # network is not the address of a host. The network of the peers goes
+      # after it — that is the match of them.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: set
+            key: "firewall.{{ tunnel_zone }}.subnet"
+            value:
+              - "{{ tunnel_address.split('/')[0] }}/32"
+              - "{{ tunnel_network }}"
+
+    - name: Let the tunnel and the lan talk to each other
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: forwarding
+            name: "{{ item.section }}"
+            find:
+              src: "{{ item.src }}"
+              dest: "{{ item.dest }}"
+            value:
+              src: "{{ item.src }}"
+              dest: "{{ item.dest }}"
+      loop:
+        - section: wg_to_lan
+          src: wg
+          dest: lan
+        - section: wg_to_wan
+          src: wg
+          dest: wan
+        - section: lan_to_wg
+          src: lan
+          dest: wg
+
+    - name: Let the peers in from the internet
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: rule
+            name: wg_incoming
+            find:
+              name: Allow-WireGuard
+            value:
+              name: Allow-WireGuard
+              src: wan
+              proto: udp
+              dest_port: "{{ wireguard_port }}"
+              target: ACCEPT
+
+    - name: Find the redirects of the wan zone
+      community.openwrt.uci:
+        command: find_all
+        config: firewall
+        type: redirect
+        find:
+          src: wan
+      register: wan_redirects
+      changed_when: false
+      failed_when: false
+
+    - name: Read the redirects of the wan zone
+      # "uci get" of a section returns the type of it, not its options.
+      community.openwrt.uci:
+        command: get
+        config: firewall
+        section: "{{ item.0 }}"
+        option: "{{ item.1 }}"
+      register: redirect_options
+      loop: >-
+        {{ wan_redirects.result_list | default([])
+        | product(redirect_fields) | list }}
+      changed_when: false
+      failed_when: false
+
+    - name: Take the redirects of the wan zone
+      ansible.builtin.set_fact:
+        public_redirects: "{{ public_redirects | default([]) + [dict(redirect_fields | zip(item))] }}"
+      loop: >-
+        {{ redirect_options.results | default([]) | map(attribute='result') | list
+        | batch(redirect_fields | length) | list }}
+
+    - name: Take only the redirects that are named
+      # A redirect without a name cannot be found by it any more, and the play
+      # would make a new section of its own instead of the one of the config.
+      ansible.builtin.set_fact:
+        public_redirects: >-
+          {{ public_redirects | default([])
+          | selectattr('name', 'defined') | rejectattr('name', 'equalto', '') | list }}
+
+    - name: Let the tunnel reach the services of the public address
+      # fw4 builds the rules of the hairpin on its own: the traffic of the lan
+      # to the public address of the router is redirected to the gate. The zone
+      # of the tunnel wants the same, and the reflection of the redirect gives
+      # it to the zone of the tunnel. A redirect of the zone of the tunnel on
+      # its own would match by the port alone.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: redirect
+            find:
+              name: "{{ item.name }}"
+            value:
+              reflection_zone: "{{ item.dest }} {{ tunnel_zone }}"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Masquerade the traffic of the tunnel to the gateway
+      # The rules of the reflection masquerade the traffic back to the lan
+      # address of the router — for the lan. The rules of the zone of the
+      # tunnel land in the chain of that zone, and the traffic of the peers
+      # leaves through the lan, so they never apply to it. The rule of its
+      # own does the same for the peers: the gateway answers to the router.
+      #
+      # The section is of the type nat and not a redirect with the target
+      # SNAT: LuCI nags about the second form until it is migrated. fw4 puts
+      # the rule of a nat into the chain of the zone of its source — the zone
+      # the traffic leaves through, and that is the lan.
+      #
+      # The section is found by its name: one that LuCI has migrated already
+      # carries this name.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: nat
+            find:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+            value:
+              name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+              src: "{{ item.dest }}"
+              src_ip: "{{ tunnel_network }}"
+              dest_ip: "{{ item.dest_ip }}"
+              dest_port: "{{ item.dest_port }}"
+              snat_ip: "{{ tunnel_address.split('/')[0] }}"
+              target: snat
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Take the rules of the old form of the tunnel away
+      # The masquerade of the way back was a redirect with the target SNAT
+      # before; LuCI wants the sections of the type nat. The section is
+      # taken away by its name, so that the rule of the nat above is the
+      # only one.
+      community.openwrt.uci:
+        autocommit: false
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}_snat"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Take the redirects of the tunnel away
+      # The older version of the play made a redirect of its own for the zone
+      # of the tunnel, and that one matched by the port alone.
+      community.openwrt.uci:
+        autocommit: false
+        command: absent
+        config: firewall
+        type: redirect
+        find:
+          name: "{{ item.name }}_{{ tunnel_zone }}"
+      loop: "{{ public_redirects | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Masquerade the traffic that leaves to the internet
+      # The zone of the wan masquerades the traffic that leaves through it. A
+      # rule of its own for the tunnel would masquerade the traffic the wrong
+      # way round: fw4 puts it into the chain of the zone of the source.
+      community.openwrt.uci:
+        autocommit: false
+        operations:
+          - command: ensure
+            config: firewall
+            type: zone
+            find:
+              name: wan
+            value:
+              masq: "1"
+
+    - name: Take the masquerade of the tunnel away
+      community.openwrt.uci:
+        command: delete
+        key: firewall.wg_masquerade
+
+    - name: Write the firewall
+      community.openwrt.uci:
+        command: commit
+        config: firewall
+
+    - name: Reload the firewall
+      community.openwrt.service:
+        name: firewall
+        state: reloaded
+
+    - name: Look for the proxy of the router
+      community.openwrt.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/init.d/podkop
+        - /etc/config/podkop
+      register: podkop_files
+
+    - name: Check that the proxy of the router is there
+      ansible.builtin.set_fact:
+        podkop_present: "{{ podkop_files.results | map(attribute='stat.exists') | list | all }}"
+
+    - name: Read the interfaces of the proxy of the router
+      # The dns of the router answers with the fake addresses of the proxy, and
+      # the proxy intercepts the traffic to them. The tunnel has to be in the
+      # list of the interfaces of the proxy as well, or the traffic of the
+      # peers to those addresses is not intercepted.
+      community.openwrt.uci:
+        command: get
+        config: podkop
+        section: settings
+        option: source_network_interfaces
+      register: podkop_interfaces
+      changed_when: false
+      failed_when: false
+      when: podkop_present | bool
+
+    - name: Let the tunnel through the proxy of the router
+      community.openwrt.uci:
+        autocommit: true
+        command: set
+        config: podkop
+        section: settings
+        option: source_network_interfaces
+        value: >-
+          {{ (podkop_interfaces.result | default('', true)).split(' ')
+          | select('ne', '') | list | union([tunnel_interface]) | join(' ') }}
+      notify: Restart the proxy of the router
+      when: podkop_present | bool
+
+  handlers:
+    - name: Restart the proxy of the router
+      community.openwrt.service:
+        name: podkop
+        state: restarted

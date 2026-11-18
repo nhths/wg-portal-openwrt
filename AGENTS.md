@@ -8,8 +8,8 @@ thing is and how to install it.
 
 - The files that go into the router or into the package are templates in `templates/`, rendered with
   Jinja2. The packaging is a script (`scripts/build-apk.sh`), not a play.
-- The real router is only ever touched through the play `ansible/router.yml`. Everything else runs in
-  the emulated guest.
+- The real router is only ever touched through the plays `ansible/router.yml` and
+  `ansible/postinstall.yml`. Everything else runs in the emulated guest.
 - Everything in the repository is in English.
 - `ARCH` is the exact value of the architecture of the router (`aarch64_cortex-a53`); apk refuses the
   package otherwise. The build artifacts are not tracked — see `.gitignore`.
@@ -166,14 +166,16 @@ router is registered by the play itself (`add_host`). The ports of the router ar
 The key of the feed is checked before it is trusted: the sha256 of it has to be the one of the
 project (`c3f7c3d1651cd5d741245952d7fd533289532acff782235f1ec29184b71a9443`). The session of
 dropbear needs the keepalive of the client as well: it drops a session that receives nothing for 300
-seconds, and it counts the packets it reads. The configuration of the portal, the zone of the
-firewall and the service are in the play as well: it writes the configuration of the portal when there
-is none yet, puts the tunnel into the firewall — the zone by device, the forwardings in both
-directions, the rule of the wan and the masquerade of the traffic of the tunnel — and starts the
-service. The port of the tunnel is the standard port of WireGuard by default, another one with `-e
-wireguard_port=...`. The play reads the port the portal really listens on from the configuration it
-writes for the interface and stops when it is not the port of the variables: the rule of the firewall
-would open a port nobody listens on.
+seconds, and it counts the packets it reads. The configuration of the portal and the service are in
+the play as well: it writes the configuration of the portal when there is none yet and starts the
+service.
+
+The firewall of the tunnel is a second play, `ansible/postinstall.yml`. The address of the tunnel is
+a variable of the play, next to the ports in `ansible/vars/router.yml`: the address of the router in
+the tunnel (`tunnel_address`) and the network of the peers (`tunnel_network`). The play checks that
+the interface of the tunnel exists and stops when it does not: the interface is made in the web
+interface of the portal. The port of the tunnel is the standard port of WireGuard by default,
+another one with `-e wireguard_port=...`.
 
 ## The firewall of the router
 
@@ -200,13 +202,18 @@ gateway, and the firewall of the router redirects the traffic of the wan zone to
 the tunnel is not redirected by that: it is delivered to the router itself, and the router answers it
 with the certificate of its own web interface (uhttpd, the OpenWrt one).
 
-fw4 builds the rules of the hairpin of the lan on its own. The play puts the zone of the tunnel into
-the reflection of the redirects of the wan zone (`reflection_zone`), and it gives the zone of the
-tunnel the network of the interface (`option subnet`) — fw4 needs the addresses of the peers for the
-rules of the reflection. The masquerade of the way back is a rule of its own (`<name>_wg_snat`): the
-rules of the reflection masquerade the traffic to the lan address of the router, but they land in
-the chain of the zone of the tunnel — and the traffic of the peers leaves through the lan, so they
-never apply to it. The rule of the play does it for the peers: the gateway answers to the router.
+fw4 builds the rules of the hairpin of the lan on its own. The postinstall puts the zone of the
+tunnel into the reflection of the redirects of the wan zone (`reflection_zone`), and it gives the
+zone of the tunnel the addresses of the peers (`option subnet`) — fw4 needs them for the rules of
+the reflection. The list has two entries, and the order of them matters: the address of the router
+in the tunnel first, as the address of a host (`172.1.0.1/32`), the network of the tunnel after it
+(`172.1.0.0/24`). fw4 takes the **first** address of the zone for the masquerade of the
+reflection, and the address of the network is not the address of a host — with the network alone
+the rule is `snat ip to 172.1.0.0`, and the gateway answers to an address that does not exist.
+The masquerade of the way back is a rule of its own (`<name>_wg_snat`): the rules of the
+reflection masquerade the traffic to the lan address of the router, but they land in the chain of
+the zone of the tunnel — and the traffic of the peers leaves through the lan, so they never apply
+to it. The rule of the play does it for the peers: the gateway answers to the router.
 
 The rule is a section of the type `nat` and not a redirect with the target `SNAT`: LuCI nags about the
 second form until it is migrated, and the migration is LuCI's business. The section is found by its
@@ -221,9 +228,9 @@ of the router answers with the fake addresses of the proxy (198.18.0.0/15), and 
 the traffic to them with the mark `0x100000` and a tproxy to itself. The tunnel has to be in the list
 of the interfaces of the proxy (`source_network_interfaces`), or the peers get the same fake addresses
 and their traffic to them is not intercepted: it goes to the internet as it is, and nobody answers it.
-The play adds the interface to the list and restarts the proxy — when the router has a proxy at all:
-the play looks for the config and the service of it first, and leaves the router alone when there is
-none.
+The postinstall adds the interface to the list and restarts the proxy — when the router has a
+proxy at all: the play looks for the config and the service of it first, and leaves the router alone
+when there is none.
 
 ### The routing of the router
 
@@ -255,13 +262,16 @@ and all of them were seen on the router:
   of the packet of the lan client is not in the address of the peer otherwise, and the module drops
   the packet.
 - Two peers with the **same** network in their allowed IPs shadow each other: the trie of the module
-  keeps one peer per prefix, and the traffic of one of them is delivered to the other. `172.26.0.2/24`
-  and `172.26.0.4/24` are the same prefix — `172.26.0.0/24` — and only one of the two peers ever
+  keeps one peer per prefix, and the traffic of one of them is delivered to the other. `172.1.0.2/24`
+  and `172.1.0.4/24` are the same prefix — `172.1.0.0/24` — and only one of the two peers ever
   receives the traffic of the network.
 
-The address of the interface of the portal is the network itself (`172.26.0.0/24`): the network
-address is not a valid source address, so the router cannot originate the traffic to the peers by
-itself, and the ping of the portal to its peers fails for that reason.
+The address of the interface of the portal is the address of the router in the tunnel
+(`172.1.0.1/24`): it has to be the address of a host, and not the address of the network — the
+network address is not a valid source address, so the router cannot originate the traffic to the
+peers by itself, and the ping of the portal to its peers fails for that reason. The network of the
+tunnel (`172.1.0.0/24`) is the network around that address: the peers have their addresses in it,
+and the play computes it from the address of the interface.
 
 ## The workflow of the release
 
@@ -293,8 +303,9 @@ known about the difference:
   dsn of `templates/openwrt/config.yaml.j2` — `/tmp/wg.db` — has to be changed too: `/tmp` is a
   tmpfs there, and the database would be gone after a reboot.
 - The firewall zone for `wg0` exists as a step of Ansible in the role `tunnel` in the emulated
-  guest; on the router the play `ansible/router.yml` makes it, together with the forwardings, the
-  rule of the wan and the masquerade of the traffic of the tunnel.
+  guest; on the router the play `ansible/postinstall.yml` makes it, together with the forwardings,
+  the rule of the wan and the masquerade of the traffic of the tunnel. The play needs the tunnel to
+  exist — it is checked in the emulated guest, never against the real router.
 - The router was touched once, on 2026-11-07, with the play of the opkg packaging of that time: the
   portal was installed and started. Nothing ran on it since — the apk packaging was checked against
   the emulated guest only.
