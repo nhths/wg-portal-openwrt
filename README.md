@@ -65,9 +65,16 @@ update the package by itself.
 
 ### With Ansible
 
-The play `ansible/router.yml` does the same on the LAN router: it fetches the public key
-of the feed, checks it, trusts it, points apk at the feed and installs the portal from
-it.
+Two plays do it on the LAN router. `ansible/router.yml` fetches the public key of the
+feed, checks it, trusts it, points apk at the feed, installs the portal from it and
+writes the configuration of it. `ansible/postinstall.yml` is the second half: it gives
+the tunnel its zone of the firewall, the rules of the hairpin, the masquerade of the
+peers and the place of the interface of the tunnel in the proxy of the router.
+
+They are two plays because the second one has to run after the portal has an interface
+of the tunnel — which is made in the web interface of the portal. The address of the
+tunnel is a variable of the second play: the address of the router in it
+(`tunnel_address`) and the network of the peers (`tunnel_network`).
 
 It needs the collection `community.openwrt` — the same one the check of the package
 uses. Its modules are ucode scripts, and the router runs them: the router has no
@@ -77,24 +84,35 @@ Python, and it needs none.
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-Apart from that, it is the play and its vars file — the ports of the router are in
-`ansible/vars/router.yml`, next to the play. Both can be fetched from the mirror and run
-from the directory they are fetched into:
+Apart from that, it is the plays and their vars file — the ports and the addresses of the
+router are in `ansible/vars/router.yml`, next to the plays. All of them can be fetched
+from the mirror and run from the directory they are fetched into:
 
 ```sh
 mkdir -p ansible/vars
 curl -sSLo ansible/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/router.yml
+curl -sSLo ansible/postinstall.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/postinstall.yml
 curl -sSLo ansible/vars/router.yml https://raw.githubusercontent.com/nhths/wg-portal-openwrt/master/ansible/vars/router.yml
 ansible-playbook ansible/router.yml
+ansible-playbook ansible/postinstall.yml
 ```
 
-The play fetches the public key of the feed itself, the address of the router is a
-variable of it, and the inventory is not needed: the router is registered by the play.
-The access is ssh as `root`, with the key of the machine the play runs on. The address of
-the router is the default of the play — `192.168.0.1`. Another address, another key:
+The install play fetches the public key of the feed itself, the address of the router is
+a variable of both plays, and the inventory is not needed: the router is registered by
+the play. The access is ssh as `root`, with the key of the machine the play runs on. The
+address of the router is the default of the play — `192.168.0.1`. Another address,
+another key:
 
 ```sh
-ansible-playbook router.yml -e router_address=192.168.0.2 -e router_ssh_key=~/.ssh/id_ed25519
+ansible-playbook ansible/router.yml -e router_address=192.168.0.2 -e router_ssh_key=~/.ssh/id_ed25519
+ansible-playbook ansible/postinstall.yml -e router_address=192.168.0.2 -e router_ssh_key=~/.ssh/id_ed25519
+```
+
+The ports and the addresses of the tunnel are given on the command line as well:
+
+```sh
+ansible-playbook ansible/router.yml -e wireguard_port=62820 -e portal_web_port=41080
+ansible-playbook ansible/postinstall.yml -e wireguard_port=62820 -e tunnel_address=172.1.0.1/24 -e tunnel_network=172.1.0.0/24
 ```
 
 The play checks the key of the feed before it trusts it: the sha256 of it has to be the
@@ -130,8 +148,8 @@ The web UI is on the port of the config.
 
 The tunnel needs a zone of the firewall of its own — by **device**, not by network (the
 interface is created by the portal itself and is not in `/etc/config/network`), and the
-traffic of the peers has to be masqueraded on the way out. The play `ansible/router.yml`
-does all of it; the details are in [AGENTS.md](AGENTS.md).
+traffic of the peers has to be masqueraded on the way out. The play
+`ansible/postinstall.yml` does all of it; the details are in [AGENTS.md](AGENTS.md).
 
 ## Update
 
